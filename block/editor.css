@@ -1,0 +1,17 @@
+.sh-block-preview {
+  border: 1px dashed #94a3b8;
+  padding: 1rem;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.sh-block-preview strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.sh-block-preview p {
+  margin: 0;
+  font-size: 0.9rem;
+}

@@ -1,0 +1,19 @@
+{
+  "apiVersion": 2,
+  "name": "shooters-hub/club-card",
+  "title": "Shooters Hub – Club Card",
+  "category": "widgets",
+  "icon": "groups",
+  "description": "Highlight a Shooters Hub club.",
+  "attributes": {
+    "clubId": { "type": "string" },
+    "showDescription": { "type": "boolean", "default": true },
+    "showContact": { "type": "boolean", "default": true },
+    "poweredBy": { "type": "boolean" }
+  },
+  "supports": {
+    "html": false
+  },
+  "editorScript": "sh/block-editor",
+  "editorStyle": "sh/block-editor"
+}

@@ -1,0 +1,20 @@
+{
+  "apiVersion": 2,
+  "name": "shooters-hub/match-card",
+  "title": "Shooters Hub – Match Card",
+  "category": "widgets",
+  "icon": "calendar-alt",
+  "description": "Display details for a specific match.",
+  "attributes": {
+    "matchId": { "type": "string" },
+    "showImage": { "type": "boolean", "default": true },
+    "showDescription": { "type": "boolean", "default": false },
+    "showButton": { "type": "boolean", "default": true },
+    "poweredBy": { "type": "boolean" }
+  },
+  "supports": {
+    "html": false
+  },
+  "editorScript": "sh/block-editor",
+  "editorStyle": "sh/block-editor"
+}

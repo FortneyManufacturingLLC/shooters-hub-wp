@@ -1,0 +1,81 @@
+name: Package release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.0.2)' 
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          VERSION=${VERSION#v}
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid semantic version: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bump version
+        run: npm run bump-version -- ${{ steps.version.outputs.version }}
+
+      - name: Build plugin assets
+        run: npm run build
+
+      - name: Remove build-time dependencies
+        run: rm -rf node_modules
+
+      - name: Commit release changes
+        run: |
+          git config user.name "Shooters Hub Bot"
+          git config user.email "engineering@fortneyengineering.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: release v${{ steps.version.outputs.version }}"
+            git push
+          fi
+
+      - name: Create tag
+        run: |
+          git tag -f "v${{ steps.version.outputs.version }}"
+          git push -f origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create release artifact
+        run: |
+          mkdir -p release
+          zip -r "release/shooters-hub-${{ steps.version.outputs.version }}.zip" . \
+            -x '*.git*' 'release/*' 'node_modules/*'
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Shooters Hub v${{ steps.version.outputs.version }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            release/shooters-hub-${{ steps.version.outputs.version }}.zip

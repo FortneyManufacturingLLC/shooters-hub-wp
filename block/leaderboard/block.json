@@ -1,0 +1,19 @@
+{
+  "apiVersion": 2,
+  "name": "shooters-hub/leaderboard",
+  "title": "Shooters Hub – Leaderboard",
+  "category": "widgets",
+  "icon": "awards",
+  "description": "Showcase a Shooters Hub leaderboard.",
+  "attributes": {
+    "seasonId": { "type": "string" },
+    "limit": { "type": "string" },
+    "title": { "type": "string" },
+    "poweredBy": { "type": "boolean" }
+  },
+  "supports": {
+    "html": false
+  },
+  "editorScript": "sh/block-editor",
+  "editorStyle": "sh/block-editor"
+}
