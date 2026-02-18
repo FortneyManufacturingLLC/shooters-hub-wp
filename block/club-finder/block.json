@@ -1,10 +1,10 @@
 {
   "apiVersion": 2,
-  "name": "shooters-hub/match-finder",
-  "title": "Shooters Hub - Match Finder",
+  "name": "shooters-hub/club-finder",
+  "title": "Shooters Hub - Club Finder",
   "category": "widgets",
-  "icon": "location-alt",
-  "description": "Embed the full Shooters Hub match finder.",
+  "icon": "groups",
+  "description": "Embed the full Shooters Hub club finder.",
   "attributes": {
     "defaultView": { "type": "string" },
     "allowedViews": { "type": "string" },
@@ -21,6 +21,7 @@
     "series": { "type": "string" },
     "seriesMode": { "type": "string" },
     "sort": { "type": "string" },
+    "minEvents": { "type": "string" },
     "hideDistanceFilters": { "type": "boolean" },
     "publicAppBase": { "type": "string" },
     "themeTokens": { "type": "string" }

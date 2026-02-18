@@ -2,13 +2,13 @@
 
 [![Download latest release](https://img.shields.io/github/v/release/FortneyManufacturingLLC/shooters-hub-wp?label=Download%20Latest&style=for-the-badge)](https://github.com/FortneyManufacturingLLC/shooters-hub-wp/releases/latest)
 
-Embed the Shooters Hub match finder, match and club cards, and season leaderboards inside WordPress. The plugin ships with both shortcodes and Gutenberg blocks, plus a REST proxy that keeps your API token safe on the server.
+Embed the Shooters Hub Match Finder and Club Finder inside WordPress. The plugin ships with shortcodes and Gutenberg blocks, and proxies API traffic through WordPress so your API key stays server-side.
 
 ## Features
-- Match Finder widget with map, list, and calendar layouts
-- Match, club, and leaderboard cards with shortcode or block support
-- Admin settings page for API endpoint, defaults, locks, and theme controls
-- Optional Match Finder landing page provisioned on activation
+- Match Finder and Club Finder powered by the same finder components used in the Shooters Hub web app
+- OLC index/tile API support via WordPress REST proxy
+- Global defaults in WP admin + per-instance shortcode/block overrides
+- Optional Match Finder and Club Finder pages provisioned on activation
 - Built-in GitHub auto-updater for quick rollouts
 
 ## Installation
@@ -16,7 +16,7 @@ Embed the Shooters Hub match finder, match and club cards, and season leaderboar
 2. In the WordPress admin, navigate to **Plugins → Add New → Upload Plugin** and upload the ZIP.
 3. Activate “Shooters Hub”.
 4. Configure **Settings → Shooters Hub** with your API base URL and key.
-5. Add the shortcodes or blocks to any page.
+5. Add either finder block/shortcode to any page.
 
 ## Development
 Install dependencies from the monorepo root:
@@ -32,6 +32,10 @@ npm run build --workspace=wp-plugin
 ```
 
 The build emits `build/match-finder.js` and `build/match-finder.css`, which are registered automatically by the plugin.
+
+## Shortcodes
+- `[shooters_hub_match_finder]`
+- `[shooters_hub_club_finder]`
 
 ## Releasing
 1. Bump the version across `package.json`, `shooters-hub.php`, and `readme.txt`:

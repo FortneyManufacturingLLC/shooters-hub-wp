@@ -8,49 +8,106 @@ class Admin {
   }
 
   public static function register_settings() {
-    register_setting(self::OPT, self::OPT, ['type' => 'array', 'show_in_rest' => false]);
+    register_setting(self::OPT, self::OPT, [
+      'type'              => 'array',
+      'show_in_rest'      => false,
+      'sanitize_callback' => [__CLASS__, 'sanitize_options'],
+    ]);
 
     add_settings_section('api', 'API', [__CLASS__, 'section_api'], self::OPT);
     self::add_text('api_base', 'API Base URL', 'https://api.shooters-hub.com', 'api');
-    self::add_text('api_key', 'API Key/Token', '••••••', 'api');
+    self::add_text('api_key', 'API Key/Token', '', 'api');
+    self::add_text('public_app_base', 'Public Shooters Hub App Base URL', 'https://shootershub.fortneyengineering.com', 'api');
 
-    add_settings_section('defaults', 'Match Finder Defaults', '__return_false', self::OPT);
-    self::add_text('default_view', 'Default View (map|list|calendar)', 'map', 'defaults');
+    add_settings_section('defaults', 'Global Finder Defaults', '__return_false', self::OPT);
     self::add_text('default_lat', 'Default Latitude', '', 'defaults');
     self::add_text('default_lng', 'Default Longitude', '', 'defaults');
-    self::add_text('default_radius', 'Default Radius (miles)', '150', 'defaults');
-    self::add_text('default_location_label', 'Default Location Label', '', 'defaults');
+    self::add_text('default_radius', 'Default Radius (miles)', '100', 'defaults');
     self::add_text('date_from', 'Default Date From (YYYY-MM-DD)', '', 'defaults');
     self::add_text('date_to', 'Default Date To (YYYY-MM-DD)', '', 'defaults');
-    self::add_text('default_types', 'Default Types (CSV)', '', 'defaults');
+    self::add_text('default_types', 'Default Disciplines (CSV)', '', 'defaults');
+    self::add_text('default_sub_disciplines', 'Default Sub-disciplines (CSV)', '', 'defaults');
     self::add_text('default_tiers', 'Default Tiers (CSV)', '', 'defaults');
     self::add_text('default_statuses', 'Default Statuses (CSV)', '', 'defaults');
-    self::add_text('default_series', 'Default Series (CSV)', '', 'defaults');
-    self::add_text('default_seasons', 'Default Seasons (CSV)', '', 'defaults');
+    self::add_text('default_series', 'Default Series IDs (CSV)', '', 'defaults');
+    self::add_text('default_series_mode', 'Series Mode (or|and)', 'or', 'defaults');
+    self::add_text('default_sort', 'Sort (dateAsc|dateDesc|nameAsc|nameDesc)', 'dateAsc', 'defaults');
+    self::add_text('default_min_events', 'Club Finder Default Min Events', '', 'defaults');
 
-    add_settings_section('locks', 'Locks & Limits', '__return_false', self::OPT);
-    self::add_checkbox('lock_view', 'Lock view selection', 'locks');
-    self::add_checkbox('lock_location', 'Lock map center and location filters', 'locks');
-    self::add_checkbox('lock_radius', 'Lock radius', 'locks');
-    self::add_checkbox('lock_filters', 'Lock advanced filters', 'locks');
-    self::add_text('allowed_views', 'Allowed Views (CSV)', 'map,list,calendar', 'locks');
-    self::add_text('radius_min', 'Radius Min (miles)', '10', 'locks');
-    self::add_text('radius_max', 'Radius Max (miles)', '500', 'locks');
+    add_settings_section('views_match', 'Match Finder Views', '__return_false', self::OPT);
+    self::add_text('match_allowed_views', 'Allowed Views (CSV)', 'map,list,calendar,chart', 'views_match');
+    self::add_text('match_default_view', 'Default View', 'map', 'views_match');
+
+    add_settings_section('views_club', 'Club Finder Views', '__return_false', self::OPT);
+    self::add_text('club_allowed_views', 'Allowed Views (CSV)', 'map,list', 'views_club');
+    self::add_text('club_default_view', 'Default View', 'map', 'views_club');
+
+    add_settings_section('theme', 'Theme', '__return_false', self::OPT);
+    self::add_text('theme_tokens', 'Theme Tokens (JSON CSS variables)', '{"--primary":"#f59e0b"}', 'theme');
+
+    add_settings_section('behavior', 'Behavior', '__return_false', self::OPT);
+    self::add_checkbox('hide_distance_filters', 'Hide distance filters', 'behavior');
 
     add_settings_section('caching', 'Caching', '__return_false', self::OPT);
     self::add_text('cache_ttl', 'Cache TTL (seconds)', '60', 'caching');
+  }
 
-    add_settings_section('presentation', 'Presentation & Branding', '__return_false', self::OPT);
-    self::add_checkbox('show_powered_by', 'Display “Powered by The Shooters Hub”', 'presentation', true);
-    self::add_text('powered_by_url', 'Powered by link URL', 'https://theshootershub.com', 'presentation');
+  public static function sanitize_options($input): array {
+    $input = is_array($input) ? $input : [];
+    $current = get_option(self::OPT, []);
+    if (!is_array($current)) $current = [];
 
-    add_settings_section('theme', 'Theme', '__return_false', self::OPT);
-    self::add_text('theme_mode', 'Theme Mode (inherit|preset|custom)', 'inherit', 'theme');
-    self::add_text('theme_tokens', 'Theme Tokens (JSON of CSS vars)', '{"--sh-accent":"#0ea5e9"}', 'theme');
+    $next = [];
+    $textKeys = [
+      'api_base',
+      'default_lat',
+      'default_lng',
+      'default_radius',
+      'date_from',
+      'date_to',
+      'default_types',
+      'default_sub_disciplines',
+      'default_tiers',
+      'default_statuses',
+      'default_series',
+      'default_series_mode',
+      'default_sort',
+      'default_min_events',
+      'match_allowed_views',
+      'match_default_view',
+      'club_allowed_views',
+      'club_default_view',
+      'theme_tokens',
+      'cache_ttl',
+      'public_app_base',
+    ];
+
+    foreach ($textKeys as $key) {
+      $next[$key] = isset($input[$key]) ? sanitize_text_field((string)$input[$key]) : '';
+    }
+
+    // Keep API key if left blank in the form.
+    if (array_key_exists('api_key', $input)) {
+      $apiKey = trim((string)$input['api_key']);
+      $next['api_key'] = $apiKey === '' ? ($current['api_key'] ?? '') : sanitize_text_field($apiKey);
+    } else {
+      $next['api_key'] = $current['api_key'] ?? '';
+    }
+
+    $boolKeys = ['hide_distance_filters'];
+    foreach ($boolKeys as $key) {
+      $next[$key] = !empty($input[$key]) ? 1 : 0;
+    }
+
+    foreach (['match_finder_page_id', 'club_finder_page_id'] as $idKey) {
+      if (isset($current[$idKey])) $next[$idKey] = intval($current[$idKey]);
+    }
+
+    return $next;
   }
 
   public static function section_api() {
-    echo '<p>Enter the Shooters Hub API endpoint and API token. The plugin proxies requests through WordPress for security.</p>';
+    echo '<p>Enter your Shooters Hub API base URL and API key. Finder requests are proxied through WordPress so the key stays server-side.</p>';
   }
 
   private static function add_text($key, $label, $placeholder = '', $section = 'defaults') {
@@ -70,66 +127,111 @@ class Admin {
 
   public static function field_text($args) {
     $opts = get_option(self::OPT, []);
-    $key  = $args['key'];
-    $val  = isset($opts[$key]) ? esc_attr($opts[$key]) : '';
-    printf('<input type="text" name="%s[%s]" value="%s" class="regular-text" placeholder="%s" />', esc_attr(self::OPT), esc_attr($key), $val, esc_attr($args['placeholder'] ?? ''));
+    $key = $args['key'];
+    $raw = isset($opts[$key]) ? (string)$opts[$key] : '';
+    $isApiKey = $key === 'api_key';
+    $value = $isApiKey ? '' : esc_attr($raw);
+    $placeholder = $isApiKey
+      ? ($raw !== '' ? 'Stored (leave blank to keep current key)' : 'Paste API key')
+      : ($args['placeholder'] ?? '');
+
+    printf(
+      '<input type="%s" name="%s[%s]" value="%s" class="regular-text" placeholder="%s" autocomplete="off" />',
+      esc_attr($isApiKey ? 'password' : 'text'),
+      esc_attr(self::OPT),
+      esc_attr($key),
+      $value,
+      esc_attr($placeholder)
+    );
   }
 
   public static function field_checkbox($args) {
     $opts = get_option(self::OPT, []);
-    $key  = $args['key'];
+    $key = $args['key'];
     $checked = isset($opts[$key]) ? (bool)$opts[$key] : (bool)($args['default'] ?? false);
-    printf('<label><input type="checkbox" name="%s[%s]" value="1" %s /> %s</label>', esc_attr(self::OPT), esc_attr($key), checked($checked, true, false), esc_html($args['label'] ?? ''));
+    printf(
+      '<label><input type="checkbox" name="%s[%s]" value="1" %s /> %s</label>',
+      esc_attr(self::OPT),
+      esc_attr($key),
+      checked($checked, true, false),
+      esc_html($args['label'] ?? '')
+    );
   }
 
   public static function page() {
     $opts = get_option(self::OPT, []);
-    $page_id = isset($opts['match_finder_page_id']) ? intval($opts['match_finder_page_id']) : 0;
-    $link = $page_id ? get_permalink($page_id) : '';
+    $matchPageId = isset($opts['match_finder_page_id']) ? intval($opts['match_finder_page_id']) : 0;
+    $clubPageId = isset($opts['club_finder_page_id']) ? intval($opts['club_finder_page_id']) : 0;
+    $matchLink = $matchPageId ? get_permalink($matchPageId) : '';
+    $clubLink = $clubPageId ? get_permalink($clubPageId) : '';
     ?>
     <div class="wrap">
-      <h1>Shooters Hub Integration</h1>
-      <p>Configure the API connection, match finder defaults, and branding for the Shooters Hub embeds. Use the provided shortcodes or Gutenberg blocks to add widgets anywhere on your site.</p>
+      <h1>Shooters Hub Finder Integration</h1>
+      <p>Configure API access and global defaults for the Match Finder and Club Finder embeds.</p>
       <form method="post" action="options.php">
         <?php settings_fields(self::OPT); do_settings_sections(self::OPT); submit_button(); ?>
       </form>
-      <h2>Usage</h2>
+
+      <h2>Shortcodes</h2>
       <ul>
-        <li><code>[shooters_hub_match_finder]</code> &ndash; renders the interactive match finder.</li>
-        <li><code>[shooters_hub_match id="MATCH_ID"]</code> &ndash; displays a single match card.</li>
-        <li><code>[shooters_hub_club id="CLUB_ID"]</code> &ndash; displays a club profile card.</li>
-        <li><code>[shooters_hub_leaderboard season="SEASON_ID"]</code> &ndash; displays a season leaderboard.</li>
+        <li><code>[shooters_hub_match_finder]</code> &ndash; renders the full match finder.</li>
+        <li><code>[shooters_hub_club_finder]</code> &ndash; renders the full club finder.</li>
       </ul>
-      <?php if ($link) : ?>
-        <p>The dedicated Match Finder page lives at: <a href="<?php echo esc_url($link); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($link); ?></a></p>
+
+      <?php if ($matchLink) : ?>
+        <p>Match Finder page: <a href="<?php echo esc_url($matchLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($matchLink); ?></a></p>
       <?php endif; ?>
-      <p><em>All embeds proudly include a “Powered by The Shooters Hub” badge. Disable it from the settings if your license allows.</em></p>
+      <?php if ($clubLink) : ?>
+        <p>Club Finder page: <a href="<?php echo esc_url($clubLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($clubLink); ?></a></p>
+      <?php endif; ?>
+      <p><strong>Powered by The Shooters Hub badge is always enabled in this build.</strong></p>
     </div>
     <?php
   }
 
-  public static function ensure_match_finder_page() {
-    $opts = get_option(self::OPT, []);
-    $page_id = isset($opts['match_finder_page_id']) ? intval($opts['match_finder_page_id']) : 0;
-    if ($page_id && get_post($page_id)) return;
+  private static function ensure_page(array &$opts, string $slug, string $title, string $shortcode, string $optKey): void {
+    $pageId = isset($opts[$optKey]) ? intval($opts[$optKey]) : 0;
+    if ($pageId && get_post($pageId)) return;
 
-    $existing = get_page_by_path('shooters-hub-match-finder');
+    $existing = get_page_by_path($slug);
     if ($existing) {
-      $opts['match_finder_page_id'] = $existing->ID;
-      update_option(self::OPT, $opts);
+      $opts[$optKey] = intval($existing->ID);
       return;
     }
 
-    $page_id = wp_insert_post([
-      'post_title'   => 'Match Finder',
-      'post_name'    => 'shooters-hub-match-finder',
+    $pageId = wp_insert_post([
+      'post_title'   => $title,
+      'post_name'    => $slug,
       'post_status'  => 'publish',
       'post_type'    => 'page',
-      'post_content' => '[shooters_hub_match_finder]'
+      'post_content' => $shortcode,
     ]);
-    if (!is_wp_error($page_id)) {
-      $opts['match_finder_page_id'] = $page_id;
-      update_option(self::OPT, $opts);
+
+    if (!is_wp_error($pageId)) {
+      $opts[$optKey] = intval($pageId);
     }
+  }
+
+  public static function ensure_match_finder_page() {
+    $opts = get_option(self::OPT, []);
+    if (!is_array($opts)) $opts = [];
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-match-finder',
+      'Match Finder',
+      '[shooters_hub_match_finder]',
+      'match_finder_page_id'
+    );
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-club-finder',
+      'Club Finder',
+      '[shooters_hub_club_finder]',
+      'club_finder_page_id'
+    );
+
+    update_option(self::OPT, $opts);
   }
 }

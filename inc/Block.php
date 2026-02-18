@@ -6,9 +6,7 @@ class Block {
 
     $blocks = [
       'match-finder' => ['callback' => [Shortcode::class, 'render_match_finder']],
-      'match-card'   => ['callback' => [Shortcode::class, 'render_match']],
-      'club-card'    => ['callback' => [Shortcode::class, 'render_club']],
-      'leaderboard'  => ['callback' => [Shortcode::class, 'render_leaderboard']],
+      'club-finder'  => ['callback' => [Shortcode::class, 'render_club_finder']],
     ];
 
     foreach ($blocks as $folder => $config) {

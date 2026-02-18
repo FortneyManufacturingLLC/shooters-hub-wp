@@ -5,17 +5,15 @@ Tested up to: 6.6
 Stable tag: 1.0.1
 License: GPLv2 or later
 
-Embed the Shooters Hub match finder, match cards, club highlights, and leaderboards on any WordPress site.
+Embed the Shooters Hub Match Finder and Club Finder on any WordPress site.
 
 == Description ==
-The official Shooters Hub plugin provides a secure way to surface match data on your site. Configure the API base URL and token under **Settings → Shooters Hub**, then use either the shortcodes or Gutenberg blocks to drop in the widgets anywhere.
+The official Shooters Hub plugin provides a secure way to surface finder data on your site. Configure the API base URL and token under **Settings → Shooters Hub**, then use shortcodes or Gutenberg blocks to place either finder anywhere.
 
-* `[shooters_hub_match_finder]` – interactive map/list/calendar finder with customizable defaults, radius/location locks, and theme controls.
-* `[shooters_hub_match id="MATCH_ID"]` – rich card for a single match.
-* `[shooters_hub_club id="CLUB_ID"]` – club profile card with contact information.
-* `[shooters_hub_leaderboard season="SEASON_ID"]` – season leaderboard table.
+* `[shooters_hub_match_finder]` – full Match Finder (map/list/calendar/chart).
+* `[shooters_hub_club_finder]` – full Club Finder (map/list).
 
-Each block mirrors the shortcode functionality and can be adjusted from the block inspector. The plugin also provisions an optional “Match Finder” page during activation for a quick start.
+Each block mirrors shortcode functionality and can be adjusted from the block inspector. The plugin provisions optional “Match Finder” and “Club Finder” pages during activation for quick start.
 
 == Installation ==
 1. Upload the plugin zip or run the provided build pipeline (`npm run build`).
@@ -28,7 +26,7 @@ Each block mirrors the shortcode functionality and can be adjusted from the bloc
 API access is provided through The Shooters Hub partner program. Configure the base URL and token supplied by the platform.
 
 = Can I hide the “Powered by The Shooters Hub” badge? =
-Yes. Toggle the branding option under the plugin settings. A license may be required to remove attribution.
+Not in this build. Attribution is forced on.
 
 == Changelog ==
 = 1.0.1 =

@@ -1,6 +1,20 @@
 <?php namespace SH;
 
 class Shortcode {
+  private static function parse_csv($value): array {
+    if (is_array($value)) return array_values(array_filter(array_map('trim', $value), 'strlen'));
+    if (!is_scalar($value)) return [];
+    return array_values(array_filter(array_map('trim', explode(',', (string)$value)), 'strlen'));
+  }
+
+  private static function parse_float($value): ?float {
+    return is_numeric($value) ? floatval($value) : null;
+  }
+
+  private static function parse_int($value): ?int {
+    return is_numeric($value) ? intval($value) : null;
+  }
+
   private static function sanitize_attrs($atts): array {
     $out = [];
     foreach ((array)$atts as $key => $value) {
@@ -15,80 +29,195 @@ class Shortcode {
     return $out;
   }
 
-  private static function defaults(array $opts): array {
-    $float = function($value) {
-      return is_numeric($value) ? floatval($value) : null;
-    };
-    return array_filter([
-      'view'           => $opts['default_view'] ?? 'map',
-      'lat'            => $float($opts['default_lat'] ?? null),
-      'lng'            => $float($opts['default_lng'] ?? null),
-      'radius'         => $float($opts['default_radius'] ?? null),
-      'from'           => $opts['date_from'] ?? '',
-      'to'             => $opts['date_to'] ?? '',
-      'types'          => $opts['default_types'] ?? '',
-      'tiers'          => $opts['default_tiers'] ?? '',
-      'statuses'       => $opts['default_statuses'] ?? '',
-      'seasons'        => $opts['default_seasons'] ?? '',
-      'series'         => $opts['default_series'] ?? '',
-      'locationLabel'  => $opts['default_location_label'] ?? '',
-    ], function($value) {
-      return $value !== '' && $value !== null;
-    });
-  }
-
-  private static function locks(array $opts): array {
-    return [
-      'view'     => !empty($opts['lock_view']),
-      'location' => !empty($opts['lock_location']),
-      'radius'   => !empty($opts['lock_radius']),
-      'filters'  => !empty($opts['lock_filters']),
+  private static function default_filters(array $opts): array {
+    $filters = [
+      'types' => self::parse_csv($opts['default_types'] ?? ''),
+      'subDisciplines' => self::parse_csv($opts['default_sub_disciplines'] ?? ''),
+      'tiers' => self::parse_csv($opts['default_tiers'] ?? ''),
+      'statuses' => self::parse_csv($opts['default_statuses'] ?? ''),
+      'series' => self::parse_csv($opts['default_series'] ?? ''),
+      'seriesMode' => (($opts['default_series_mode'] ?? 'or') === 'and') ? 'and' : 'or',
+      'sort' => in_array(($opts['default_sort'] ?? ''), ['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc'], true)
+        ? $opts['default_sort']
+        : 'dateAsc',
     ];
+
+    $from = trim((string)($opts['date_from'] ?? ''));
+    $to = trim((string)($opts['date_to'] ?? ''));
+    if ($from !== '') $filters['from'] = $from;
+    if ($to !== '') $filters['to'] = $to;
+
+    $minEvents = self::parse_int($opts['default_min_events'] ?? null);
+    if ($minEvents !== null && $minEvents >= 0) $filters['minEvents'] = $minEvents;
+
+    $lat = self::parse_float($opts['default_lat'] ?? null);
+    $lng = self::parse_float($opts['default_lng'] ?? null);
+    $radius = self::parse_float($opts['default_radius'] ?? null);
+    if ($lat !== null) $filters['lat'] = $lat;
+    if ($lng !== null) $filters['lng'] = $lng;
+    if ($radius !== null) $filters['radius'] = $radius;
+
+    return $filters;
   }
 
-  private static function allowed_views(array $opts): array {
-    if (empty($opts['allowed_views'])) return [];
-    return array_filter(array_map('trim', explode(',', $opts['allowed_views'])));
+  private static function mode_allowed_views(array $opts, string $mode): array {
+    $csv = $mode === 'clubs'
+      ? ($opts['club_allowed_views'] ?? 'map,list')
+      : ($opts['match_allowed_views'] ?? 'map,list,calendar,chart');
+    $allowed = self::parse_csv($csv);
+    $valid = $mode === 'clubs' ? ['map', 'list'] : ['map', 'list', 'calendar', 'chart'];
+    $filtered = array_values(array_filter($allowed, function($view) use ($valid) {
+      return in_array($view, $valid, true);
+    }));
+    return !empty($filtered) ? $filtered : $valid;
   }
 
-  private static function radius_limits(array $opts): array {
-    $min = isset($opts['radius_min']) && is_numeric($opts['radius_min']) ? floatval($opts['radius_min']) : null;
-    $max = isset($opts['radius_max']) && is_numeric($opts['radius_max']) ? floatval($opts['radius_max']) : null;
-    return ['min' => $min, 'max' => $max];
+  private static function mode_default_view(array $opts, string $mode, array $allowed): string {
+    $candidate = $mode === 'clubs'
+      ? ($opts['club_default_view'] ?? 'map')
+      : ($opts['match_default_view'] ?? 'map');
+    return in_array($candidate, $allowed, true) ? $candidate : $allowed[0];
   }
 
   private static function theme(array $opts): array {
     $tokens = [];
     if (!empty($opts['theme_tokens'])) {
       $decoded = json_decode((string)$opts['theme_tokens'], true);
-      if (is_array($decoded)) $tokens = $decoded;
+      if (is_array($decoded)) {
+        foreach ($decoded as $key => $value) {
+          if (is_scalar($value)) $tokens[(string)$key] = (string)$value;
+        }
+      }
     }
-    return [
-      'mode'   => $opts['theme_mode'] ?? 'inherit',
-      'tokens' => $tokens,
-    ];
+    return ['tokens' => $tokens];
   }
 
-  private static function render_embed(string $type, array $atts = []): string {
+  private static function with_overrides(array $finder, array $attrs, string $mode): array {
+    $map = [
+      'lat' => 'lat',
+      'lng' => 'lng',
+      'radius' => 'radius',
+      'from' => 'from',
+      'to' => 'to',
+      'zip' => 'zip',
+      'seriesMode' => 'seriesMode',
+      'sort' => 'sort',
+      'minEvents' => 'minEvents',
+      'lockedClubId' => 'lockedClubId',
+      'hideDistanceFilters' => 'hideDistanceFilters',
+      'publicAppBase' => 'publicAppBase',
+    ];
+
+    foreach ($map as $attrKey => $filterKey) {
+      if (!array_key_exists($attrKey, $attrs)) continue;
+      $value = $attrs[$attrKey];
+      if ($value === '' || $value === null) continue;
+      if (in_array($attrKey, ['lat', 'lng', 'radius'], true)) {
+        if (is_numeric($value)) $finder['initialFilters'][$filterKey] = floatval($value);
+        continue;
+      }
+      if ($attrKey === 'minEvents') {
+        if (is_numeric($value)) $finder['initialFilters'][$filterKey] = intval($value);
+        continue;
+      }
+      if ($attrKey === 'hideDistanceFilters') {
+        $finder[$filterKey] = in_array(strtolower((string)$value), ['1', 'true', 'yes', 'on'], true);
+        continue;
+      }
+      if ($attrKey === 'publicAppBase') {
+        $finder[$filterKey] = esc_url_raw((string)$value);
+        continue;
+      }
+      if ($attrKey === 'lockedClubId') {
+        if ($mode === 'matches') {
+          $finder[$filterKey] = (string)$value;
+        }
+        continue;
+      }
+      $finder['initialFilters'][$filterKey] = (string)$value;
+    }
+
+    $arrayMap = [
+      'types' => 'types',
+      'subDisciplines' => 'subDisciplines',
+      'tiers' => 'tiers',
+      'statuses' => 'statuses',
+      'series' => 'series',
+    ];
+    foreach ($arrayMap as $attrKey => $filterKey) {
+      if (!array_key_exists($attrKey, $attrs)) continue;
+      $finder['initialFilters'][$filterKey] = self::parse_csv($attrs[$attrKey]);
+    }
+
+    if (isset($attrs['allowedViews'])) {
+      $candidate = self::parse_csv($attrs['allowedViews']);
+      $valid = $mode === 'clubs' ? ['map', 'list'] : ['map', 'list', 'calendar', 'chart'];
+      $finder['allowedViews'] = array_values(array_filter($candidate, function($view) use ($valid) {
+        return in_array($view, $valid, true);
+      }));
+      if (empty($finder['allowedViews'])) {
+        $finder['allowedViews'] = $valid;
+      }
+    }
+
+    if (isset($attrs['defaultView'])) {
+      $view = (string)$attrs['defaultView'];
+      if (in_array($view, $finder['allowedViews'], true)) {
+        $finder['defaultView'] = $view;
+      }
+    }
+
+    return $finder;
+  }
+
+  private static function render_finder(string $mode, array $atts = []): string {
     Assets::enqueue();
 
     $opts = get_option(Admin::OPT, []);
-    $showPowered = array_key_exists('show_powered_by', $opts) ? !empty($opts['show_powered_by']) : true;
-    $poweredUrl  = !empty($opts['powered_by_url']) ? esc_url_raw($opts['powered_by_url']) : '';
+    $attrs = self::sanitize_attrs($atts);
+
+    $allowedViews = self::mode_allowed_views($opts, $mode);
+    $defaultView = self::mode_default_view($opts, $mode, $allowedViews);
+
+    $defaultLat = self::parse_float($opts['default_lat'] ?? null);
+    $defaultLng = self::parse_float($opts['default_lng'] ?? null);
+    $defaultRadius = self::parse_float($opts['default_radius'] ?? null);
+
+    $finder = [
+      'allowedViews' => $allowedViews,
+      'defaultView' => $defaultView,
+      'defaultCenter' => [
+        'lat' => $defaultLat,
+        'lng' => $defaultLng,
+      ],
+      'defaultRadius' => $defaultRadius,
+      'hideDistanceFilters' => !empty($opts['hide_distance_filters']),
+      'publicAppBase' => !empty($opts['public_app_base']) ? esc_url_raw((string)$opts['public_app_base']) : '',
+      'initialFilters' => self::default_filters($opts),
+    ];
+
+    $finder = self::with_overrides($finder, $attrs, $mode);
+
+    $theme = self::theme($opts);
+    if (!empty($attrs['themeTokens'])) {
+      $decoded = json_decode((string)$attrs['themeTokens'], true);
+      if (is_array($decoded)) {
+        $tokens = [];
+        foreach ($decoded as $key => $value) {
+          if (is_scalar($value)) $tokens[(string)$key] = (string)$value;
+        }
+        if (!empty($tokens)) $theme['tokens'] = $tokens;
+      }
+    }
 
     $config = [
-      'type'    => $type,
-      'restBase'=> esc_url_raw( get_rest_url(null, 'shooters-hub/v1/proxy') ),
-      'attrs'   => self::sanitize_attrs($atts),
-      'options' => [
-        'defaults'      => self::defaults($opts),
-        'locks'         => self::locks($opts),
-        'allowedViews'  => self::allowed_views($opts),
-        'radiusLimits'  => self::radius_limits($opts),
-        'theme'         => self::theme($opts),
-        'showPoweredBy' => $showPowered,
-        'poweredByUrl'  => $poweredUrl,
-      ],
+      'type' => 'finder',
+      'mode' => $mode,
+      'apiBase' => esc_url_raw(get_rest_url(null, 'shooters-hub/v1/proxy')),
+      'olcBase' => esc_url_raw(get_rest_url(null, 'shooters-hub/v1/proxy/olc')),
+      'finder' => $finder,
+      'theme' => $theme,
+      'poweredByLockedOn' => true,
     ];
 
     $id = 'sh-embed-' . wp_generate_uuid4();
@@ -96,25 +225,17 @@ class Shortcode {
 
     ob_start(); ?>
       <div id="<?php echo esc_attr($id); ?>"
-           class="sh-embed sh-embed-<?php echo esc_attr($type); ?>"
+           class="sh-embed sh-embed-finder sh-embed-<?php echo esc_attr($mode); ?>"
            data-sh-config="<?php echo esc_attr($json); ?>"></div>
     <?php
     return trim(ob_get_clean());
   }
 
   public static function render_match_finder($atts = []): string {
-    return self::render_embed('matchFinder', (array)$atts);
+    return self::render_finder('matches', (array)$atts);
   }
 
-  public static function render_match($atts = []): string {
-    return self::render_embed('matchCard', (array)$atts);
-  }
-
-  public static function render_club($atts = []): string {
-    return self::render_embed('clubCard', (array)$atts);
-  }
-
-  public static function render_leaderboard($atts = []): string {
-    return self::render_embed('leaderboard', (array)$atts);
+  public static function render_club_finder($atts = []): string {
+    return self::render_finder('clubs', (array)$atts);
   }
 }

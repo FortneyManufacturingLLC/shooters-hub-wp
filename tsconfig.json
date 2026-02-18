@@ -4,9 +4,10 @@
     "module": "esnext",
     "jsx": "react-jsx",
     "moduleResolution": "node",
+    "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["src", "stubs"]
+  "include": ["src", "stubs", "../web-app/src", "../web-app/app"]
 }
