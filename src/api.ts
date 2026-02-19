@@ -2,6 +2,7 @@ import type {
   MatchSummary,
   ClubSummary,
   SeasonSummary,
+  SeriesSummary,
   ViewMode,
   PluginDefaults,
 } from './types';
@@ -75,6 +76,14 @@ export async function fetchSeason(restBase: string, id: string, signal?: AbortSi
   const params = new URLSearchParams({ path: `/seasons/${encodeURIComponent(id)}` });
   const url = `${restBase}?${params.toString()}`;
   const data = await fetchJSON<SeasonSummary>(url, { signal });
+  return data ?? null;
+}
+
+export async function fetchSeries(restBase: string, id: string, signal?: AbortSignal): Promise<SeriesSummary | null> {
+  if (!id) return null;
+  const params = new URLSearchParams({ path: `/series/${encodeURIComponent(id)}` });
+  const url = `${restBase}?${params.toString()}`;
+  const data = await fetchJSON<SeriesSummary>(url, { signal });
   return data ?? null;
 }
 

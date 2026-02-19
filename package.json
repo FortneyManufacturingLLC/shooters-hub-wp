@@ -4,7 +4,8 @@
   "version": "1.0.1",
   "scripts": {
     "clean:src-js": "find src -maxdepth 1 -name '*.js' -delete",
-    "prebuild": "npm run clean:src-js",
+    "sync:finder-ui": "node ./scripts/sync-finder-ui.mjs",
+    "prebuild": "npm run sync:finder-ui && npm run clean:src-js",
     "build": "vite build",
     "smoke-test": "./scripts/ci-smoke-test.sh",
     "release:verify": "npm run build && npm run smoke-test",

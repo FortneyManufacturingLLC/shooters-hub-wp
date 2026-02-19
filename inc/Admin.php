@@ -15,7 +15,7 @@ class Admin {
     ]);
 
     add_settings_section('api', 'API', [__CLASS__, 'section_api'], self::OPT);
-    self::add_text('api_base', 'API Base URL', 'https://api.shooters-hub.com', 'api');
+    self::add_text('api_base', 'API Base URL', 'https://shootershub.fortneyengineering.com/api', 'api');
     self::add_text('api_key', 'API Key/Token', '', 'api');
     self::add_text('public_app_base', 'Public Shooters Hub App Base URL', 'https://shootershub.fortneyengineering.com', 'api');
 
@@ -25,6 +25,7 @@ class Admin {
     self::add_text('default_radius', 'Default Radius (miles)', '100', 'defaults');
     self::add_text('date_from', 'Default Date From (YYYY-MM-DD)', '', 'defaults');
     self::add_text('date_to', 'Default Date To (YYYY-MM-DD)', '', 'defaults');
+    self::add_text('default_date_window_months', 'Default Date Window (months from today, 0=off)', '6', 'defaults');
     self::add_text('default_types', 'Default Disciplines (CSV)', '', 'defaults');
     self::add_text('default_sub_disciplines', 'Default Sub-disciplines (CSV)', '', 'defaults');
     self::add_text('default_tiers', 'Default Tiers (CSV)', '', 'defaults');
@@ -47,6 +48,7 @@ class Admin {
 
     add_settings_section('behavior', 'Behavior', '__return_false', self::OPT);
     self::add_checkbox('hide_distance_filters', 'Hide distance filters', 'behavior');
+    self::add_checkbox('enable_local_entity_pages', 'Use local WordPress entity links in finder results', 'behavior');
 
     add_settings_section('caching', 'Caching', '__return_false', self::OPT);
     self::add_text('cache_ttl', 'Cache TTL (seconds)', '60', 'caching');
@@ -65,6 +67,7 @@ class Admin {
       'default_radius',
       'date_from',
       'date_to',
+      'default_date_window_months',
       'default_types',
       'default_sub_disciplines',
       'default_tiers',
@@ -94,12 +97,19 @@ class Admin {
       $next['api_key'] = $current['api_key'] ?? '';
     }
 
-    $boolKeys = ['hide_distance_filters'];
+    $boolKeys = ['hide_distance_filters', 'enable_local_entity_pages'];
     foreach ($boolKeys as $key) {
       $next[$key] = !empty($input[$key]) ? 1 : 0;
     }
 
-    foreach (['match_finder_page_id', 'club_finder_page_id'] as $idKey) {
+    foreach ([
+      'match_finder_page_id',
+      'club_finder_page_id',
+      'match_entity_page_id',
+      'club_entity_page_id',
+      'series_entity_page_id',
+      'leaderboard_entity_page_id',
+    ] as $idKey) {
       if (isset($current[$idKey])) $next[$idKey] = intval($current[$idKey]);
     }
 
@@ -162,8 +172,16 @@ class Admin {
     $opts = get_option(self::OPT, []);
     $matchPageId = isset($opts['match_finder_page_id']) ? intval($opts['match_finder_page_id']) : 0;
     $clubPageId = isset($opts['club_finder_page_id']) ? intval($opts['club_finder_page_id']) : 0;
+    $matchEntityPageId = isset($opts['match_entity_page_id']) ? intval($opts['match_entity_page_id']) : 0;
+    $clubEntityPageId = isset($opts['club_entity_page_id']) ? intval($opts['club_entity_page_id']) : 0;
+    $seriesEntityPageId = isset($opts['series_entity_page_id']) ? intval($opts['series_entity_page_id']) : 0;
+    $leaderboardEntityPageId = isset($opts['leaderboard_entity_page_id']) ? intval($opts['leaderboard_entity_page_id']) : 0;
     $matchLink = $matchPageId ? get_permalink($matchPageId) : '';
     $clubLink = $clubPageId ? get_permalink($clubPageId) : '';
+    $matchEntityLink = $matchEntityPageId ? get_permalink($matchEntityPageId) : '';
+    $clubEntityLink = $clubEntityPageId ? get_permalink($clubEntityPageId) : '';
+    $seriesEntityLink = $seriesEntityPageId ? get_permalink($seriesEntityPageId) : '';
+    $leaderboardEntityLink = $leaderboardEntityPageId ? get_permalink($leaderboardEntityPageId) : '';
     ?>
     <div class="wrap">
       <h1>Shooters Hub Finder Integration</h1>
@@ -176,6 +194,8 @@ class Admin {
       <ul>
         <li><code>[shooters_hub_match_finder]</code> &ndash; renders the full match finder.</li>
         <li><code>[shooters_hub_club_finder]</code> &ndash; renders the full club finder.</li>
+        <li><code>[shooters_hub_match_page]</code>, <code>[shooters_hub_club_page]</code>, <code>[shooters_hub_series_page]</code>, <code>[shooters_hub_leaderboard_page]</code> &ndash; entity template pages.</li>
+        <li><code>[shooters_hub_entity_page type=\"match|club|series|leaderboard\" id=\"optional\"]</code> &ndash; generic entity renderer.</li>
       </ul>
 
       <?php if ($matchLink) : ?>
@@ -184,6 +204,19 @@ class Admin {
       <?php if ($clubLink) : ?>
         <p>Club Finder page: <a href="<?php echo esc_url($clubLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($clubLink); ?></a></p>
       <?php endif; ?>
+      <?php if ($matchEntityLink) : ?>
+        <p>Match template page: <a href="<?php echo esc_url($matchEntityLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($matchEntityLink); ?></a></p>
+      <?php endif; ?>
+      <?php if ($clubEntityLink) : ?>
+        <p>Club template page: <a href="<?php echo esc_url($clubEntityLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($clubEntityLink); ?></a></p>
+      <?php endif; ?>
+      <?php if ($seriesEntityLink) : ?>
+        <p>Series template page: <a href="<?php echo esc_url($seriesEntityLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($seriesEntityLink); ?></a></p>
+      <?php endif; ?>
+      <?php if ($leaderboardEntityLink) : ?>
+        <p>Leaderboard template page: <a href="<?php echo esc_url($leaderboardEntityLink); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($leaderboardEntityLink); ?></a></p>
+      <?php endif; ?>
+      <p>Entity routes: <code>/match/{id}</code>, <code>/club/{id}</code>, <code>/series/{id}</code>, <code>/leaderboard/{id}</code>.</p>
       <p><strong>Powered by The Shooters Hub badge is always enabled in this build.</strong></p>
     </div>
     <?php
@@ -230,6 +263,38 @@ class Admin {
       'Club Finder',
       '[shooters_hub_club_finder]',
       'club_finder_page_id'
+    );
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-match',
+      'Match',
+      '[shooters_hub_match_page]',
+      'match_entity_page_id'
+    );
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-club',
+      'Club',
+      '[shooters_hub_club_page]',
+      'club_entity_page_id'
+    );
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-series',
+      'Series',
+      '[shooters_hub_series_page]',
+      'series_entity_page_id'
+    );
+
+    self::ensure_page(
+      $opts,
+      'shooters-hub-leaderboard',
+      'Leaderboard',
+      '[shooters_hub_leaderboard_page]',
+      'leaderboard_entity_page_id'
     );
 
     update_option(self::OPT, $opts);

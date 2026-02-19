@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { MatchFinder } from './match-finder';
-import type { EmbedConfig } from './types';
+import { EntityPage } from './entity-page';
+import type { EmbedConfig, FinderEmbedConfig } from './types';
 
 interface AppProps {
   config: EmbedConfig;
@@ -42,50 +43,66 @@ export const ShootersHubApp: React.FC<AppProps> = ({ config, node }) => {
     window.__SH_PLUGIN_OLC_BASE__ = config.olcBase;
   }, [config.apiBase, config.olcBase]);
 
+  if (config.type === 'entity-page') {
+    return <EntityPage config={config} />;
+  }
+
+  const finderConfig = config as FinderEmbedConfig;
+
   const allowedViews = useMemo(() => {
-    const fromConfig = Array.isArray(config.finder?.allowedViews) ? config.finder.allowedViews : [];
+    const fromConfig = Array.isArray(finderConfig.finder?.allowedViews) ? finderConfig.finder.allowedViews : [];
     if (fromConfig.length) return fromConfig as any;
-    return config.mode === 'clubs' ? ['map', 'list'] : ['map', 'list', 'calendar', 'chart'];
-  }, [config.finder?.allowedViews, config.mode]);
+    return finderConfig.mode === 'clubs' ? ['map', 'list'] : ['map', 'list', 'calendar', 'chart'];
+  }, [finderConfig.finder?.allowedViews, finderConfig.mode]);
 
   const defaultCenter = useMemo(() => {
-    const lat = toNumber(config.finder?.defaultCenter?.lat);
-    const lng = toNumber(config.finder?.defaultCenter?.lng);
+    const lat = toNumber(finderConfig.finder?.defaultCenter?.lat);
+    const lng = toNumber(finderConfig.finder?.defaultCenter?.lng);
     if (lat == null || lng == null) return undefined;
     return { lat, lng };
-  }, [config.finder?.defaultCenter?.lat, config.finder?.defaultCenter?.lng]);
+  }, [finderConfig.finder?.defaultCenter?.lat, finderConfig.finder?.defaultCenter?.lng]);
 
   const options = useMemo(() => {
-    const initial = config.finder?.initialFilters;
+    const initial = finderConfig.finder?.initialFilters;
     return {
+      mode: finderConfig.mode,
       allowedViews,
       defaults: {
-        view: config.finder?.defaultView,
+        view: finderConfig.finder?.defaultView,
         lat: toNumber(initial?.lat) ?? defaultCenter?.lat,
         lng: toNumber(initial?.lng) ?? defaultCenter?.lng,
-        radius: toNumber(initial?.radius) ?? toNumber(config.finder?.defaultRadius),
+        radius: toNumber(initial?.radius) ?? toNumber(finderConfig.finder?.defaultRadius),
         from: initial?.from,
         to: initial?.to,
         types: Array.isArray(initial?.types) ? initial?.types.join(',') : undefined,
+        subDisciplines: Array.isArray(initial?.subDisciplines) ? initial?.subDisciplines.join(',') : undefined,
         tiers: Array.isArray(initial?.tiers) ? initial?.tiers.join(',') : undefined,
         statuses: Array.isArray(initial?.statuses) ? initial?.statuses.join(',') : undefined,
         series: Array.isArray(initial?.series) ? initial?.series.join(',') : undefined,
+        seriesMode: initial?.seriesMode,
+        sort: initial?.sort,
+        minEvents: initial?.minEvents,
       },
       locks: {
         view: false,
-        location: !!config.finder?.hideDistanceFilters,
-        radius: !!config.finder?.hideDistanceFilters,
+        location: !!finderConfig.finder?.hideDistanceFilters,
+        radius: !!finderConfig.finder?.hideDistanceFilters,
         filters: false,
       },
       radiusLimits: { min: 5, max: 500 },
       showPoweredBy: true,
-      poweredByUrl: config.finder?.publicAppBase,
+      poweredByUrl: finderConfig.finder?.publicAppBase,
+      controlsLayout: (finderConfig.finder as any)?.controlsLayout || 'left',
+      hideDistanceFilters: !!finderConfig.finder?.hideDistanceFilters,
+      entityLinkMode: finderConfig.finder?.entityLinkMode || 'external',
+      entityPathBases: finderConfig.finder?.entityPathBases || {},
+      olcBase: finderConfig.olcBase,
     };
-  }, [allowedViews, config.finder, defaultCenter?.lat, defaultCenter?.lng]);
+  }, [allowedViews, finderConfig, defaultCenter?.lat, defaultCenter?.lng]);
 
   return (
     <MatchFinder
-      restBase={config.apiBase}
+      restBase={finderConfig.apiBase}
       options={options as any}
       attrs={undefined}
     />

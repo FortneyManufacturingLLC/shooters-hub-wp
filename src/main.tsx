@@ -16,8 +16,9 @@ const parseConfig = (raw: string): EmbedConfig | null => {
   try {
     const parsed = JSON.parse(raw || '{}');
     if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.type !== 'finder') return null;
-    if (!parsed.mode || !parsed.apiBase || !parsed.olcBase) return null;
+    if (!parsed.type || !parsed.apiBase || !parsed.olcBase) return null;
+    if (parsed.type === 'finder' && !parsed.mode) return null;
+    if (parsed.type === 'entity-page' && !parsed.entityType) return null;
     return parsed as EmbedConfig;
   } catch (err) {
     console.error('[ShootersHub] Failed to parse config', err);

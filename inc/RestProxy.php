@@ -18,7 +18,7 @@ class RestProxy {
     ]);
 
     register_rest_route('shooters-hub/v1', '/proxy/olc/(?P<path>.*)', [
-      'methods' => 'GET',
+      'methods' => ['GET', 'POST', 'OPTIONS'],
       'callback' => [__CLASS__, 'handle_olc'],
       'permission_callback' => '__return_true',
     ]);
@@ -26,7 +26,10 @@ class RestProxy {
 
   private static function get_proxy_config(): array {
     $opts = get_option(Admin::OPT, []);
-    $api = rtrim((string)($opts['api_base'] ?? ''), '/');
+    $api = rtrim((string)($opts['api_base'] ?? 'https://shootershub.fortneyengineering.com/api'), '/');
+    if ($api === '') {
+      $api = 'https://shootershub.fortneyengineering.com/api';
+    }
     $key = (string)($opts['api_key'] ?? '');
     $ttl = isset($opts['cache_ttl']) && is_numeric($opts['cache_ttl']) ? max(0, intval($opts['cache_ttl'])) : 60;
 
@@ -129,10 +132,13 @@ class RestProxy {
       return new WP_Error('sh_missing_api', 'Shooters Hub API is not configured', ['status' => 500]);
     }
 
+    $method = strtoupper((string)$req->get_method());
+    if ($method === 'OPTIONS') return rest_ensure_response(['ok' => true]);
+
     $path = '/olc/' . ltrim((string)$req->get_param('path'), '/');
     $query = $req->get_query_params();
     unset($query['path']);
 
-    return self::do_proxy($api, $key, $ttl, $path, $query);
+    return self::do_proxy($api, $key, $ttl, $path, $query, $method, (string)$req->get_body());
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -8,6 +8,7 @@ import { fetchMatches, mergeDefaults, type MatchQuery } from './api';
 import type { MatchSummary, PluginOptions, ViewMode } from './types';
 import { clamp, formatAddress, formatDate, formatDistance, groupByMonth, sortMatchesByDate } from './utils';
 import { PoweredBy } from './powered-by';
+import { MatchFinderListItem } from './MatchFinderListItem';
 
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -29,10 +30,28 @@ interface FinderState {
   from?: string;
   to?: string;
   types?: string;
+  subDisciplines?: string;
   tiers?: string;
   statuses?: string;
   seasons?: string;
   series?: string;
+  seriesMode: 'or' | 'and';
+  minEvents?: number;
+  sort?: 'dateAsc' | 'dateDesc' | 'nameAsc' | 'nameDesc';
+}
+
+interface ClubResultItem {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  nextEventDate?: string;
+  upcomingCount: number;
+  disciplines: string[];
+  subDisciplines: string[];
+  tiers: string[];
+  statuses: string[];
+  seriesIds: string[];
 }
 
 const parseBoolean = (value: any, fallback: boolean): boolean => {
@@ -60,28 +79,361 @@ const parseCsv = (value: any): string | undefined => {
   return str ? str : undefined;
 };
 
-const useDebounced = <T,>(value: T, delay = 250): T => {
-  const [state, setState] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setState(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return state;
+const csvToList = (value?: string): string[] => {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+};
+
+const listToCsv = (values: string[]): string | undefined => {
+  if (!values.length) return undefined;
+  return values.join(',');
+};
+
+const normalizeLabel = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+type CachedTile = {
+  updatedAt: string;
+  fetchedAt: number;
+  items: MatchSummary[];
+};
+
+const olcTileCache = new Map<string, CachedTile>();
+const olcMissingCache = new Map<string, number>();
+const MISSING_TTL_MS = 10 * 60 * 1000;
+
+const normalizeMonth = (value?: string): string => {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{6}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+  return raw;
+};
+
+const monthsBetween = (from?: string, to?: string, maxMonths = 12): string[] => {
+  const start = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? new Date(`${from}T00:00:00`) : new Date();
+  const end = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? new Date(`${to}T00:00:00`) : new Date(start.getFullYear(), start.getMonth() + 6, 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [new Date().toISOString().slice(0, 7)];
+  const s = new Date(start.getFullYear(), start.getMonth(), 1);
+  const e = new Date(end.getFullYear(), end.getMonth(), 1);
+  const out: string[] = [];
+  for (let d = s; d <= e && out.length < maxMonths; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out.length ? out : [new Date().toISOString().slice(0, 7)];
+};
+
+const CODE_ALPHABET = '23456789CFGHJMPQRVWX';
+
+const normalizeLng = (lng: number): number => {
+  let out = lng;
+  while (out < -180) out += 360;
+  while (out >= 180) out -= 360;
+  return out;
+};
+
+const encodeOlc4 = (lat: number, lng: number): string => {
+  const latClamped = Math.min(89.999999, Math.max(-90, lat));
+  const lngNorm = normalizeLng(lng);
+  const latVal = latClamped + 90;
+  const lngVal = lngNorm + 180;
+  const latFirst = Math.floor(latVal / 20);
+  const lngFirst = Math.floor(lngVal / 20);
+  const latSecond = Math.floor(latVal % 20);
+  const lngSecond = Math.floor(lngVal % 20);
+  return (
+    CODE_ALPHABET[latFirst] +
+    CODE_ALPHABET[lngFirst] +
+    CODE_ALPHABET[latSecond] +
+    CODE_ALPHABET[lngSecond]
+  );
+};
+
+const olc4CoverCircle = (center: { lat: number; lng: number }, radiusMi: number): string[] => {
+  const latRadius = radiusMi / 69.0;
+  const lngRadius = radiusMi / (69.0 * Math.cos((center.lat * Math.PI) / 180));
+  const minLat = center.lat - latRadius;
+  const maxLat = center.lat + latRadius;
+  const minLng = center.lng - lngRadius;
+  const maxLng = center.lng + lngRadius;
+  const tiles = new Set<string>();
+  for (let lat = Math.floor(minLat); lat <= Math.floor(maxLat); lat++) {
+    for (let lng = Math.floor(minLng); lng <= Math.floor(maxLng); lng++) {
+      tiles.add(encodeOlc4(lat + 0.5, lng + 0.5));
+    }
+  }
+  return Array.from(tiles);
+};
+
+const distanceMi = (a: { lat: number; lng: number }, b: { lat: number; lng: number }): number => {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(
+    Math.sqrt(sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng),
+    Math.sqrt(1 - (sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng))
+  );
+  return (R * c) / 1609.34;
+};
+
+const splitCsvSet = (value?: string): Set<string> => new Set(csvToList(value).map((v) => v.toLowerCase()));
+
+const parseTileToMatches = (tile: any): MatchSummary[] => {
+  const rows = Array.isArray(tile?.rows) ? tile.rows : [];
+  const columns = Array.isArray(tile?.columns) ? tile.columns : [];
+  if (!rows.length || !columns.length) return Array.isArray(tile?.items) ? tile.items : [];
+
+  const idx = (name: string) => columns.indexOf(name);
+  const iId = idx('id');
+  const iTitle = idx('title');
+  const iStart = idx('start');
+  const iLat = idx('lat');
+  const iLng = idx('lng');
+  const iClubName = idx('clubName');
+  const iTier = Math.max(idx('matchTier'), idx('tier'));
+  const iStatus = idx('status');
+  const iDiscipline = idx('discipline');
+  const iSubDiscipline = Math.max(idx('subDiscipline'), idx('subDisciplines'));
+  const iSeriesIds = idx('seriesIds');
+  const iSeasons = idx('seasons');
+
+  const toList = (value: unknown): string[] => {
+    if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(',').map((v) => v.trim()).filter(Boolean);
+    return [];
+  };
+
+  return rows
+    .map((row: any) => {
+      if (!Array.isArray(row)) return null;
+      const id = iId >= 0 ? String(row[iId] || '').trim() : '';
+      if (!id) return null;
+      const lat = iLat >= 0 ? Number(row[iLat]) : NaN;
+      const lng = iLng >= 0 ? Number(row[iLng]) : NaN;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      const start = iStart >= 0 && row[iStart] != null ? String(row[iStart]) : '';
+      const date = start ? start.slice(0, 10) : undefined;
+      const disciplines = iDiscipline >= 0 ? toList(row[iDiscipline]) : [];
+      const subDiscipline = iSubDiscipline >= 0 ? toList(row[iSubDiscipline]) : [];
+      return {
+        id,
+        title: iTitle >= 0 && row[iTitle] != null ? String(row[iTitle]) : id,
+        date,
+        location: {
+          lat,
+          lng,
+          name: iClubName >= 0 && row[iClubName] != null ? String(row[iClubName]) : '',
+        },
+        matchTier: iTier >= 0 && row[iTier] != null ? String(row[iTier]) : undefined,
+        status: iStatus >= 0 && row[iStatus] != null ? String(row[iStatus]) : undefined,
+        disciplines,
+        subDiscipline,
+        seriesIds: iSeriesIds >= 0 ? toList(row[iSeriesIds]) : [],
+        seasons: iSeasons >= 0 ? toList(row[iSeasons]) : [],
+      } as any;
+    })
+    .filter(Boolean) as MatchSummary[];
+};
+
+const fetchMatchesViaOlc = async (
+  olcBase: string,
+  state: FinderState,
+  signal?: AbortSignal
+): Promise<MatchSummary[]> => {
+  if (!olcBase || state.lat == null || state.lng == null) return [];
+
+  const months = monthsBetween(state.from, state.to, 12);
+  const coverage = olc4CoverCircle({ lat: state.lat, lng: state.lng }, state.radius || 100);
+  const coverageSet = new Set(coverage);
+  const olc2s = Array.from(new Set(coverage.map((code) => code.slice(0, 2))));
+
+  const indexPairs = months.flatMap((month) => olc2s.map((olc2) => ({ olc2, month })));
+  const indexResults = await Promise.all(
+    indexPairs.map(async ({ olc2, month }) => {
+      const url = `${olcBase.replace(/\/+$/, '')}/index?olc2=${encodeURIComponent(olc2)}&month=${encodeURIComponent(month)}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) return { key: `${olc2}:${month}`, tiles: null as any[] | null };
+      const payload = await res.json().catch(() => ({}));
+      const rawTiles = Array.isArray(payload?.tiles) ? payload.tiles : [];
+      const tiles = rawTiles
+        .map((entry: any) => {
+          if (typeof entry === 'string') return { olc4: entry.toUpperCase() };
+          const olc4 = typeof entry?.olc4 === 'string' ? entry.olc4.toUpperCase() : '';
+          const updatedAt = typeof entry?.updatedAt === 'string' ? entry.updatedAt : undefined;
+          return olc4 ? { olc4, updatedAt } : null;
+        })
+        .filter(Boolean) as Array<{ olc4: string; updatedAt?: string }>;
+      return { key: `${olc2}:${month}`, tiles };
+    })
+  );
+
+  const selectedTileIds = new Set<string>();
+  const indexUpdatedAt = new Map<string, string>();
+  for (const month of months) {
+    for (const olc2 of olc2s) {
+      const key = `${olc2}:${month}`;
+      const found = indexResults.find((r) => r.key === key);
+      const tiles = found?.tiles;
+      if (!tiles || !tiles.length) continue;
+      tiles.forEach((tile) => {
+        if (!coverageSet.has(tile.olc4)) return;
+        const tileId = `${tile.olc4}:${month}`;
+        selectedTileIds.add(tileId);
+        if (tile.updatedAt) indexUpdatedAt.set(tileId, tile.updatedAt);
+      });
+    }
+  }
+
+  const candidates = Array.from(selectedTileIds);
+  if (!candidates.length) return [];
+
+  const now = Date.now();
+  const tileIds = candidates.filter((tileId) => {
+    const missingAt = olcMissingCache.get(tileId);
+    if (missingAt != null && now - missingAt < MISSING_TTL_MS) return false;
+    return true;
+  });
+  if (!tileIds.length) return [];
+
+  const CHUNK = 180;
+  for (let i = 0; i < tileIds.length; i += CHUNK) {
+    const batchIds = tileIds.slice(i, i + CHUNK);
+    const have = batchIds
+      .map((tileId) => {
+        const cached = olcTileCache.get(tileId);
+        const forcedUpdatedAt = indexUpdatedAt.get(tileId);
+        if (!cached) return null;
+        if (forcedUpdatedAt && cached.updatedAt !== forcedUpdatedAt) return null;
+        return { tileId, updatedAt: cached.updatedAt };
+      })
+      .filter(Boolean);
+
+    const payload = {
+      tileIds: batchIds,
+      have,
+      disciplines: csvToList(state.types),
+      tiers: csvToList(state.tiers),
+    };
+    const res = await fetch(`${olcBase.replace(/\/+$/, '')}/tiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `Failed to load OLC tiles (${res.status})`);
+    }
+    const body = await res.json().catch(() => ({} as any));
+
+    const tiles = Array.isArray(body?.tiles) ? body.tiles : [];
+    tiles.forEach((tile: any) => {
+      const tileId = typeof tile?.tileId === 'string' ? tile.tileId : `${String(tile?.olc4 || '').toUpperCase()}:${normalizeMonth(tile?.yyyymm)}`;
+      const updatedAt = typeof tile?.updatedAt === 'string' ? tile.updatedAt : new Date().toISOString();
+      const items = parseTileToMatches(tile);
+      olcTileCache.set(tileId, { updatedAt, fetchedAt: Date.now(), items });
+      olcMissingCache.delete(tileId);
+    });
+
+    const notModified = Array.isArray(body?.notModified) ? body.notModified : [];
+    notModified.forEach((tileId: string) => {
+      const cached = olcTileCache.get(tileId);
+      if (cached) cached.fetchedAt = Date.now();
+    });
+
+    const missing = Array.isArray(body?.missing) ? body.missing : [];
+    missing.forEach((tileId: string) => {
+      olcMissingCache.set(tileId, Date.now());
+    });
+  }
+
+  const statusSet = splitCsvSet(state.statuses);
+  const subDisciplineSet = splitCsvSet(state.subDisciplines);
+  const seasonsSet = splitCsvSet(state.seasons);
+  const seriesSet = splitCsvSet(state.series);
+  const fromTs = state.from ? new Date(`${state.from}T00:00:00`).getTime() : Number.NaN;
+  const toTs = state.to ? new Date(`${state.to}T23:59:59`).getTime() : Number.NaN;
+
+  const dedupe = new Map<string, MatchSummary>();
+  selectedTileIds.forEach((tileId) => {
+    const cached = olcTileCache.get(tileId);
+    if (!cached) return;
+    cached.items.forEach((match: any) => {
+      const lat = Number(match?.location?.lat);
+      const lng = Number(match?.location?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const dist = distanceMi({ lat: state.lat!, lng: state.lng! }, { lat, lng });
+      if (dist > (state.radius || 100)) return;
+
+      if (!Number.isNaN(fromTs) || !Number.isNaN(toTs)) {
+        const dateValue = match?.date ? new Date(`${match.date}T12:00:00`).getTime() : Number.NaN;
+        if (!Number.isNaN(fromTs) && (Number.isNaN(dateValue) || dateValue < fromTs)) return;
+        if (!Number.isNaN(toTs) && (Number.isNaN(dateValue) || dateValue > toTs)) return;
+      }
+
+      if (statusSet.size) {
+        const status = String(match?.status || '').toLowerCase();
+        if (!statusSet.has(status)) return;
+      }
+
+      if (subDisciplineSet.size) {
+        const subDiscipline = Array.isArray(match?.subDiscipline) ? match.subDiscipline : [match?.subDiscipline];
+        const lowered = subDiscipline.map((s: any) => String(s || '').toLowerCase()).filter(Boolean);
+        if (!lowered.some((s: string) => subDisciplineSet.has(s))) return;
+      }
+
+      if (seasonsSet.size) {
+        const seasons = Array.isArray(match?.seasons) ? match.seasons.map((s: any) => String(s).toLowerCase()) : [];
+        if (!seasons.some((s: string) => seasonsSet.has(s))) return;
+      }
+
+      if (seriesSet.size) {
+        const series = Array.isArray(match?.seriesIds) ? match.seriesIds.map((s: any) => String(s).toLowerCase()) : [];
+        if ((state.seriesMode || 'or') === 'and') {
+          const needed = Array.from(seriesSet.values());
+          if (!needed.every((s) => series.includes(s))) return;
+        } else if (!series.some((s: string) => seriesSet.has(s))) {
+          return;
+        }
+      }
+
+      const id = String(match?.id || '');
+      if (!id) return;
+      dedupe.set(id, { ...match, distanceMi: dist } as any);
+    });
+  });
+
+  const items = sortMatchesByDate(Array.from(dedupe.values()));
+  if (state.sort === 'dateDesc') return items.slice().reverse();
+  if (state.sort === 'nameAsc') return items.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+  if (state.sort === 'nameDesc') return items.slice().sort((a, b) => String(b.title || '').localeCompare(String(a.title || '')));
+  return items;
 };
 
 export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, attrs }) => {
+  const finderMode: 'matches' | 'clubs' = String((options as any)?.mode || 'matches') === 'clubs' ? 'clubs' : 'matches';
   const allowedViews = useMemo<ViewMode[]>(() => {
     const fromOptions = Array.isArray(options.allowedViews) && options.allowedViews.length
       ? options.allowedViews
-      : ['map', 'list', 'calendar'];
+      : ['map', 'list', 'calendar', 'chart'];
     const fromAttrs = parseCsv(attrs?.views || attrs?.allowedViews || attrs?.allowed_views);
     if (!fromAttrs) return fromOptions as ViewMode[];
     const parsed = fromAttrs.split(',').map((v) => v.trim().toLowerCase() as ViewMode);
-    return parsed.filter((view) => ['map', 'list', 'calendar'].includes(view));
+    return parsed.filter((view) => ['map', 'list', 'calendar', 'chart'].includes(view));
   }, [options.allowedViews, attrs]);
 
   const defaults = useMemo(() => mergeDefaults(options.defaults || {}, attrs), [options.defaults, attrs]);
-  const defaultView = parseView(defaults.view, allowedViews.length ? allowedViews : ['map', 'list', 'calendar'], allowedViews[0] || 'map');
+  const defaultView = parseView(defaults.view, allowedViews.length ? allowedViews : ['map', 'list', 'calendar', 'chart'], allowedViews[0] || 'map');
 
   const locks = useMemo(() => ({
     view: parseBoolean(attrs?.lockView ?? attrs?.lock_view, !!options.locks.view),
@@ -101,8 +453,13 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
 
   const showPoweredBy = parseBoolean(attrs?.poweredBy ?? attrs?.powered_by, options.showPoweredBy);
   const poweredUrl = attrs?.poweredByUrl || attrs?.powered_by_url || options.poweredByUrl;
+  const controlsLayout = useMemo<'left' | 'top'>(() => {
+    const raw = String(attrs?.layout || (options as any)?.controlsLayout || 'left').toLowerCase();
+    return raw === 'top' ? 'top' : 'left';
+  }, [attrs, options]);
+  const hideDistanceFilters = !!(options as any)?.hideDistanceFilters;
 
-  const [state, setState] = useState<FinderState>(() => ({
+  const defaultState = useMemo<FinderState>(() => ({
     view: defaultView,
     lat: defaults.lat,
     lng: defaults.lng,
@@ -110,239 +467,623 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     from: defaults.from,
     to: defaults.to,
     types: defaults.types,
+    subDisciplines: (defaults as any).subDisciplines,
     tiers: defaults.tiers,
     statuses: defaults.statuses,
     seasons: defaults.seasons,
     series: defaults.series,
-  }));
+    seriesMode: ((defaults as any).seriesMode === 'and' ? 'and' : 'or'),
+    minEvents: Number.isFinite((defaults as any).minEvents) ? Number((defaults as any).minEvents) : undefined,
+    sort: (['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc'].includes(String((defaults as any).sort)) ? (defaults as any).sort : 'dateAsc'),
+  }), [defaultView, defaults, radiusLimits.max, radiusLimits.min]);
+  const [draftState, setDraftState] = useState<FinderState>(defaultState);
+  const [appliedState, setAppliedState] = useState<FinderState>(defaultState);
 
   useEffect(() => {
-    setState((prev) => ({
+    const nextDefaults: FinderState = {
+      ...defaultState,
+      view: locks.view ? defaultView : defaultState.view,
+      lat: locks.location ? defaults.lat : defaultState.lat,
+      lng: locks.location ? defaults.lng : defaultState.lng,
+      radius: locks.radius ? clamp(defaults.radius ?? defaultState.radius, radiusLimits.min, radiusLimits.max) : clamp(defaultState.radius, radiusLimits.min, radiusLimits.max),
+      from: locks.filters ? defaults.from : defaultState.from,
+      to: locks.filters ? defaults.to : defaultState.to,
+      types: locks.filters ? defaults.types : defaultState.types,
+      subDisciplines: locks.filters ? (defaults as any).subDisciplines : defaultState.subDisciplines,
+      tiers: locks.filters ? defaults.tiers : defaultState.tiers,
+      statuses: locks.filters ? defaults.statuses : defaultState.statuses,
+      seasons: locks.filters ? defaults.seasons : defaultState.seasons,
+      series: locks.filters ? defaults.series : defaultState.series,
+      seriesMode: locks.filters ? (((defaults as any).seriesMode === 'and') ? 'and' : 'or') : defaultState.seriesMode,
+      minEvents: locks.filters ? (Number.isFinite((defaults as any).minEvents) ? Number((defaults as any).minEvents) : undefined) : defaultState.minEvents,
+      sort: locks.filters
+        ? (['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc'].includes(String((defaults as any).sort)) ? (defaults as any).sort : 'dateAsc')
+        : defaultState.sort,
+    };
+    setDraftState((prev) => ({
       ...prev,
-      view: locks.view ? defaultView : prev.view,
-      lat: locks.location ? defaults.lat : prev.lat,
-      lng: locks.location ? defaults.lng : prev.lng,
+      view: locks.view ? nextDefaults.view : prev.view,
+      lat: locks.location ? nextDefaults.lat : prev.lat,
+      lng: locks.location ? nextDefaults.lng : prev.lng,
       radius: locks.radius ? clamp(defaults.radius ?? prev.radius, radiusLimits.min, radiusLimits.max) : clamp(prev.radius, radiusLimits.min, radiusLimits.max),
-      from: locks.filters ? defaults.from : prev.from,
-      to: locks.filters ? defaults.to : prev.to,
-      types: locks.filters ? defaults.types : prev.types,
-      tiers: locks.filters ? defaults.tiers : prev.tiers,
-      statuses: locks.filters ? defaults.statuses : prev.statuses,
-      seasons: locks.filters ? defaults.seasons : prev.seasons,
-      series: locks.filters ? defaults.series : prev.series,
+      from: locks.filters ? nextDefaults.from : prev.from,
+      to: locks.filters ? nextDefaults.to : prev.to,
+      types: locks.filters ? nextDefaults.types : prev.types,
+      subDisciplines: locks.filters ? nextDefaults.subDisciplines : prev.subDisciplines,
+      tiers: locks.filters ? nextDefaults.tiers : prev.tiers,
+      statuses: locks.filters ? nextDefaults.statuses : prev.statuses,
+      seasons: locks.filters ? nextDefaults.seasons : prev.seasons,
+      series: locks.filters ? nextDefaults.series : prev.series,
+      seriesMode: locks.filters ? nextDefaults.seriesMode : prev.seriesMode,
+      minEvents: locks.filters ? nextDefaults.minEvents : prev.minEvents,
+      sort: locks.filters ? nextDefaults.sort : prev.sort,
     }));
-  }, [locks, defaults, defaultView, radiusLimits]);
+    setAppliedState((prev) => ({
+      ...prev,
+      view: locks.view ? nextDefaults.view : prev.view,
+      lat: locks.location ? nextDefaults.lat : prev.lat,
+      lng: locks.location ? nextDefaults.lng : prev.lng,
+      radius: locks.radius ? clamp(defaults.radius ?? prev.radius, radiusLimits.min, radiusLimits.max) : clamp(prev.radius, radiusLimits.min, radiusLimits.max),
+      from: locks.filters ? nextDefaults.from : prev.from,
+      to: locks.filters ? nextDefaults.to : prev.to,
+      types: locks.filters ? nextDefaults.types : prev.types,
+      subDisciplines: locks.filters ? nextDefaults.subDisciplines : prev.subDisciplines,
+      tiers: locks.filters ? nextDefaults.tiers : prev.tiers,
+      statuses: locks.filters ? nextDefaults.statuses : prev.statuses,
+      seasons: locks.filters ? nextDefaults.seasons : prev.seasons,
+      series: locks.filters ? nextDefaults.series : prev.series,
+      seriesMode: locks.filters ? nextDefaults.seriesMode : prev.seriesMode,
+      minEvents: locks.filters ? nextDefaults.minEvents : prev.minEvents,
+      sort: locks.filters ? nextDefaults.sort : prev.sort,
+    }));
+  }, [locks, defaults, defaultState, defaultView, radiusLimits]);
 
-  const debouncedState = useDebounced(state, 300);
   const [matches, setMatches] = useState<MatchSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [expandedFilterGroups, setExpandedFilterGroups] = useState<Record<string, boolean>>({});
+  const filterSig = useMemo(() => JSON.stringify({
+    lat: draftState.lat,
+    lng: draftState.lng,
+    radius: draftState.radius,
+    from: draftState.from,
+    to: draftState.to,
+    types: draftState.types,
+    subDisciplines: draftState.subDisciplines,
+    tiers: draftState.tiers,
+    statuses: draftState.statuses,
+    seasons: draftState.seasons,
+    series: draftState.series,
+    seriesMode: draftState.seriesMode,
+    minEvents: draftState.minEvents,
+    sort: draftState.sort,
+  }), [draftState]);
+  const appliedFilterSig = useMemo(() => JSON.stringify({
+    lat: appliedState.lat,
+    lng: appliedState.lng,
+    radius: appliedState.radius,
+    from: appliedState.from,
+    to: appliedState.to,
+    types: appliedState.types,
+    subDisciplines: appliedState.subDisciplines,
+    tiers: appliedState.tiers,
+    statuses: appliedState.statuses,
+    seasons: appliedState.seasons,
+    series: appliedState.series,
+    seriesMode: appliedState.seriesMode,
+    minEvents: appliedState.minEvents,
+    sort: appliedState.sort,
+  }), [appliedState]);
+  const hasPendingChanges = filterSig !== appliedFilterSig;
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    const query: MatchQuery = {
-      lat: debouncedState.lat,
-      lng: debouncedState.lng,
-      radius: debouncedState.radius,
-      from: debouncedState.from,
-      to: debouncedState.to,
-    };
-    if (debouncedState.types) query.type = debouncedState.types;
-    if (debouncedState.tiers) query.tier = debouncedState.tiers;
-    if (debouncedState.statuses) query.status = debouncedState.statuses;
-    if (debouncedState.seasons) query.seasons = debouncedState.seasons;
-    if (debouncedState.series) query.series = debouncedState.series;
-    fetchMatches(restBase, query, controller.signal)
-      .then((items) => {
-        setMatches(sortMatchesByDate(items));
-        setLoading(false);
-      })
-      .catch((err) => {
+    const run = async () => {
+      const olcBase = String((options as any)?.olcBase || '').trim();
+      try {
+        if (olcBase && appliedState.lat != null && appliedState.lng != null) {
+          const items = await fetchMatchesViaOlc(olcBase, appliedState, controller.signal);
+          if (!controller.signal.aborted) {
+            setMatches(items);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        // Fall through to /matches fallback.
+        console.warn('[finder-ui] OLC fetch failed; falling back to /matches', err);
+      }
+
+      const query: MatchQuery = {
+        lat: appliedState.lat,
+        lng: appliedState.lng,
+        radius: appliedState.radius,
+        from: appliedState.from,
+        to: appliedState.to,
+      };
+      if (appliedState.types) query.type = appliedState.types;
+      if (appliedState.tiers) query.tier = appliedState.tiers;
+      if (appliedState.statuses) query.status = appliedState.statuses;
+      if (appliedState.seasons) query.seasons = appliedState.seasons;
+      if (appliedState.series) query.series = appliedState.series;
+      if (appliedState.seriesMode) query.seriesMode = appliedState.seriesMode;
+      if (appliedState.sort) query.sort = appliedState.sort;
+      try {
+        const items = await fetchMatches(restBase, query, controller.signal);
+        if (!controller.signal.aborted) {
+          const sorted = sortMatchesByDate(items);
+          if (appliedState.sort === 'dateDesc') {
+            setMatches(sorted.slice().reverse());
+          } else if (appliedState.sort === 'nameAsc') {
+            setMatches(sorted.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''))));
+          } else if (appliedState.sort === 'nameDesc') {
+            setMatches(sorted.slice().sort((a, b) => String(b.title || '').localeCompare(String(a.title || ''))));
+          } else {
+            setMatches(sorted);
+          }
+          setLoading(false);
+        }
+      } catch (err: any) {
         if (controller.signal.aborted) return;
         setLoading(false);
         setError(err?.message || 'Unable to load matches');
-      });
+      }
+    };
+
+    void run();
     return () => controller.abort();
-  }, [restBase, debouncedState]);
+  }, [restBase, appliedState, options]);
 
   const setField = (key: keyof FinderState, value: any) => {
-    setState((prev) => ({ ...prev, [key]: value }));
+    setDraftState((prev) => ({ ...prev, [key]: value }));
   };
+
+  const onMapCenterChange = useCallback((coords: { lat?: number; lng?: number }) => {
+    setDraftState((prev) => {
+      const nextLat = coords.lat;
+      const nextLng = coords.lng;
+      if (
+        typeof nextLat === 'number' &&
+        typeof nextLng === 'number' &&
+        typeof prev.lat === 'number' &&
+        typeof prev.lng === 'number' &&
+        Math.abs(nextLat - prev.lat) < 0.00001 &&
+        Math.abs(nextLng - prev.lng) < 0.00001
+      ) {
+        return prev;
+      }
+      return { ...prev, ...coords };
+    });
+  }, []);
 
   const onUseMyLocation = () => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition((pos) => {
-      setState((prev) => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude }));
+      setDraftState((prev) => ({ ...prev, lat: pos.coords.latitude, lng: pos.coords.longitude }));
     });
   };
 
   const centerLabel = defaults.locationLabel || attrs?.locationLabel || attrs?.location_label || '';
 
+  const clubResults = useMemo<ClubResultItem[]>(() => {
+    const byClub = new Map<string, ClubResultItem>();
+    matches.forEach((match: any) => {
+      const clubIdRaw = String(match?.clubId || match?.location?.name || '').trim();
+      if (!clubIdRaw) return;
+      const clubName = String(match?.clubName || match?.location?.name || clubIdRaw).trim();
+      const lat = Number(match?.location?.lat);
+      const lng = Number(match?.location?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const key = clubIdRaw;
+      const existing = byClub.get(key) || {
+        id: key,
+        name: clubName,
+        lat,
+        lng,
+        upcomingCount: 0,
+        disciplines: [],
+        subDisciplines: [],
+        tiers: [],
+        statuses: [],
+        seriesIds: [],
+      };
+
+      existing.upcomingCount += 1;
+      const nextDate = typeof match?.date === 'string' ? match.date : '';
+      if (nextDate && (!existing.nextEventDate || nextDate < existing.nextEventDate)) {
+        existing.nextEventDate = nextDate;
+      }
+
+      const addMany = (target: string[], input: any) => {
+        const list = Array.isArray(input) ? input : typeof input === 'string' ? [input] : [];
+        list.forEach((entry) => {
+          const value = String(entry || '').trim();
+          if (value && !target.includes(value)) target.push(value);
+        });
+      };
+      addMany(existing.disciplines, match?.disciplines || match?.type);
+      addMany(existing.subDisciplines, match?.subDiscipline || match?.subDisciplines);
+      addMany(existing.tiers, [match?.matchTier, match?.tier]);
+      addMany(existing.statuses, [match?.status]);
+      addMany(existing.seriesIds, match?.seriesIds || match?.series);
+
+      byClub.set(key, existing);
+    });
+    return Array.from(byClub.values()).sort((a, b) => {
+      if (a.nextEventDate && b.nextEventDate) return a.nextEventDate.localeCompare(b.nextEventDate);
+      if (a.nextEventDate) return -1;
+      if (b.nextEventDate) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [matches]);
+
+  const availableFilters = useMemo(() => {
+    const types = new Set<string>(csvToList(defaults.types));
+    const subDisciplines = new Set<string>(csvToList((defaults as any).subDisciplines));
+    const tiers = new Set<string>(csvToList(defaults.tiers));
+    const statuses = new Set<string>(csvToList(defaults.statuses));
+    const seasons = new Set<string>(csvToList(defaults.seasons));
+    const series = new Set<string>(csvToList(defaults.series));
+
+    const sourceMatches = finderMode === 'clubs' ? matches : matches;
+    sourceMatches.forEach((match: any) => {
+      const typeCandidates = [
+        ...(Array.isArray(match?.disciplines) ? match.disciplines : []),
+        ...(Array.isArray(match?.type) ? match.type : [match?.type]),
+        ...(Array.isArray(match?.matchType) ? match.matchType : [match?.matchType]),
+      ];
+      typeCandidates.forEach((entry) => {
+        const label = normalizeLabel(entry);
+        if (label) types.add(label);
+      });
+      const subDisciplineCandidates = [
+        ...(Array.isArray(match?.subDiscipline) ? match.subDiscipline : [match?.subDiscipline]),
+        ...(Array.isArray(match?.subDisciplines) ? match.subDisciplines : [match?.subDisciplines]),
+      ];
+      subDisciplineCandidates.forEach((entry) => {
+        const label = normalizeLabel(entry);
+        if (label) subDisciplines.add(label);
+      });
+
+      const tier = normalizeLabel(match?.matchTier ?? match?.tier);
+      if (tier) tiers.add(tier);
+      const status = normalizeLabel(match?.status);
+      if (status) statuses.add(status);
+
+      const seasonCandidates = [
+        ...(Array.isArray(match?.seasons) ? match.seasons : []),
+        ...(Array.isArray(match?.seasonIds) ? match.seasonIds : []),
+        match?.seasonId,
+      ];
+      seasonCandidates.forEach((entry) => {
+        const label = normalizeLabel(entry);
+        if (label) seasons.add(label);
+      });
+
+      const seriesCandidates = [
+        ...(Array.isArray(match?.series) ? match.series : []),
+        ...(Array.isArray(match?.seriesIds) ? match.seriesIds : []),
+        match?.seriesId,
+      ];
+      seriesCandidates.forEach((entry) => {
+        const label = normalizeLabel(entry);
+        if (label) series.add(label);
+      });
+    });
+
+    const sorter = (a: string, b: string) => a.localeCompare(b);
+    return {
+      types: Array.from(types).sort(sorter),
+      subDisciplines: Array.from(subDisciplines).sort(sorter),
+      tiers: Array.from(tiers).sort(sorter),
+      statuses: Array.from(statuses).sort(sorter),
+      seasons: Array.from(seasons).sort(sorter),
+      series: Array.from(series).sort(sorter),
+    };
+  }, [finderMode, matches, defaults, defaults.types, defaults.tiers, defaults.statuses, defaults.seasons, defaults.series]);
+
+  const toggleCsvFilter = useCallback((key: 'types' | 'subDisciplines' | 'tiers' | 'statuses' | 'seasons' | 'series', value: string) => {
+    setDraftState((prev) => {
+      const current = new Set(csvToList(prev[key]));
+      if (current.has(value)) current.delete(value);
+      else current.add(value);
+      return { ...prev, [key]: listToCsv(Array.from(current)) };
+    });
+  }, []);
+
+  const filteredClubs = useMemo(() => {
+    const types = splitCsvSet(appliedState.types);
+    const subDisciplines = splitCsvSet(appliedState.subDisciplines);
+    const tiers = splitCsvSet(appliedState.tiers);
+    const statuses = splitCsvSet(appliedState.statuses);
+    const series = splitCsvSet(appliedState.series);
+    return clubResults.filter((club: ClubResultItem) => {
+      if (types.size) {
+        const clubTypes = club.disciplines.map((d) => d.toLowerCase());
+        if (!clubTypes.some((d) => types.has(d))) return false;
+      }
+      if (subDisciplines.size) {
+        const clubSubs = club.subDisciplines.map((d) => d.toLowerCase());
+        if (!clubSubs.some((d) => subDisciplines.has(d))) return false;
+      }
+      if (tiers.size) {
+        const clubTiers = club.tiers.map((d) => d.toLowerCase());
+        if (!clubTiers.some((d) => tiers.has(d))) return false;
+      }
+      if (statuses.size) {
+        const clubStatuses = club.statuses.map((d) => d.toLowerCase());
+        if (!clubStatuses.some((d) => statuses.has(d))) return false;
+      }
+      if (series.size) {
+        const clubSeries = club.seriesIds.map((d) => d.toLowerCase());
+        if ((appliedState.seriesMode || 'or') === 'and') {
+          const needed = Array.from(series.values());
+          if (!needed.every((id) => clubSeries.includes(id))) return false;
+        } else if (!clubSeries.some((d) => series.has(d))) {
+          return false;
+        }
+      }
+      if (Number.isFinite(appliedState.minEvents) && (appliedState.minEvents as number) > 0 && club.upcomingCount < (appliedState.minEvents as number)) {
+        return false;
+      }
+      return true;
+    });
+  }, [clubResults, appliedState.types, appliedState.subDisciplines, appliedState.tiers, appliedState.statuses, appliedState.series, appliedState.seriesMode, appliedState.minEvents]);
+
+  const listMatchesForView = finderMode === 'clubs'
+    ? filteredClubs.map((club) => ({
+        id: club.id,
+        title: club.name,
+        date: club.nextEventDate,
+        matchTier: club.tiers[0],
+        status: club.statuses[0],
+        disciplines: club.disciplines,
+        subDiscipline: club.subDisciplines,
+        seriesIds: club.seriesIds,
+        distanceMi: Number.isFinite(appliedState.lat) && Number.isFinite(appliedState.lng)
+          ? distanceMi({ lat: appliedState.lat as number, lng: appliedState.lng as number }, { lat: club.lat, lng: club.lng })
+          : undefined,
+        location: { lat: club.lat, lng: club.lng, name: club.name },
+        clubName: club.name,
+        clubId: club.id,
+      } as any))
+    : matches;
+
   return (
-    <div className={`sh-match-finder sh-view-${state.view}`}>
+    <div className={`sh-match-finder sh-view-${draftState.view}`}>
       <header className="sh-header">
         <div className="sh-header-left">
           <h2>Shooters Hub Match Finder</h2>
           {centerLabel && <p className="sh-subtle">{centerLabel}</p>}
-          {state.lat != null && state.lng != null && (
+          {appliedState.lat != null && appliedState.lng != null && (
             <p className="sh-subtle">
-              Center at {state.lat.toFixed(4)}, {state.lng.toFixed(4)} · Radius {state.radius} mi
+              Center at {appliedState.lat.toFixed(4)}, {appliedState.lng.toFixed(4)} · Radius {appliedState.radius} mi
             </p>
           )}
         </div>
         <div className="sh-header-right">
           <div className="sh-view-toggle" role="group" aria-label="View mode">
-            {(allowedViews.length ? allowedViews : ['map', 'list', 'calendar']).map((view) => (
+            {(allowedViews.length ? allowedViews : ['map', 'list', 'calendar', 'chart']).map((view) => (
               <button
                 key={view}
                 type="button"
-                className={view === state.view ? 'active' : ''}
+                className={view === draftState.view ? 'active' : ''}
                 onClick={() => !locks.view && setField('view', view)}
                 disabled={locks.view}
               >
-                {view === 'map' ? 'Map' : view === 'list' ? 'List' : 'Calendar'}
+                {view === 'map' ? 'Map' : view === 'list' ? 'List' : view === 'calendar' ? 'Calendar' : 'Chart'}
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="sh-button"
+            onClick={() => setAppliedState((prev) => ({ ...draftState, view: prev.view }))}
+            disabled={!hasPendingChanges || loading}
+            aria-disabled={!hasPendingChanges || loading}
+          >
+            {loading ? 'Updating…' : (hasPendingChanges ? 'Update' : 'Updated')}
+          </button>
         </div>
       </header>
 
-      <section className="sh-controls">
-        <div className="sh-field-group">
-          <label>
-            Latitude
-            <input
-              type="number"
-              step="0.0001"
-              value={state.lat ?? ''}
-              onChange={(e) => setField('lat', e.target.value === '' ? undefined : Number(e.target.value))}
-              disabled={locks.location}
-            />
-          </label>
-          <label>
-            Longitude
-            <input
-              type="number"
-              step="0.0001"
-              value={state.lng ?? ''}
-              onChange={(e) => setField('lng', e.target.value === '' ? undefined : Number(e.target.value))}
-              disabled={locks.location}
-            />
-          </label>
-          <label>
-            Radius (mi)
-            <input
-              type="number"
-              min={radiusLimits.min ?? 0}
-              max={radiusLimits.max ?? 1000}
-              value={state.radius}
-              onChange={(e) => setField('radius', clamp(Number(e.target.value) || defaults.radius || 150, radiusLimits.min, radiusLimits.max))}
-              disabled={locks.radius}
-            />
-          </label>
-          {!locks.location && (
-            <button type="button" className="sh-button secondary" onClick={onUseMyLocation}>
-              Use my location
-            </button>
-          )}
-        </div>
+      <div className={`sh-layout sh-layout-${controlsLayout}`}>
+        <section className="sh-controls">
+          {!hideDistanceFilters ? (
+            <div className="sh-field-group">
+              <label>
+                Latitude
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={draftState.lat ?? ''}
+                  onChange={(e) => setField('lat', e.target.value === '' ? undefined : Number(e.target.value))}
+                  disabled={locks.location}
+                />
+              </label>
+              <label>
+                Longitude
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={draftState.lng ?? ''}
+                  onChange={(e) => setField('lng', e.target.value === '' ? undefined : Number(e.target.value))}
+                  disabled={locks.location}
+                />
+              </label>
+              <label>
+                Radius (mi)
+                <input
+                  type="number"
+                  min={radiusLimits.min ?? 0}
+                  max={radiusLimits.max ?? 1000}
+                  value={draftState.radius}
+                  onChange={(e) => setField('radius', clamp(Number(e.target.value) || defaults.radius || 150, radiusLimits.min, radiusLimits.max))}
+                  disabled={locks.radius}
+                />
+              </label>
+              {!locks.location && (
+                <button type="button" className="sh-button secondary" onClick={onUseMyLocation}>
+                  Use my location
+                </button>
+              )}
+            </div>
+          ) : null}
 
-        <div className="sh-field-group">
-          <label>
-            Date from
-            <input
-              type="date"
-              value={state.from || ''}
-              onChange={(e) => setField('from', e.target.value || undefined)}
-              disabled={locks.filters}
-            />
-          </label>
-          <label>
-            Date to
-            <input
-              type="date"
-              value={state.to || ''}
-              onChange={(e) => setField('to', e.target.value || undefined)}
-              disabled={locks.filters}
-            />
-          </label>
-        </div>
-
-        <details className="sh-advanced" open={!locks.filters && Boolean(state.types || state.tiers || state.statuses || state.seasons || state.series)}>
-          <summary>Advanced filters</summary>
           <div className="sh-field-group">
             <label>
-              Match types (CSV)
+              Date from
               <input
-                type="text"
-                value={state.types || ''}
-                onChange={(e) => setField('types', e.target.value || undefined)}
+                type="date"
+                value={draftState.from || ''}
+                onChange={(e) => setField('from', e.target.value || undefined)}
                 disabled={locks.filters}
               />
             </label>
             <label>
-              Match tiers (CSV)
+              Date to
               <input
-                type="text"
-                value={state.tiers || ''}
-                onChange={(e) => setField('tiers', e.target.value || undefined)}
+                type="date"
+                value={draftState.to || ''}
+                onChange={(e) => setField('to', e.target.value || undefined)}
                 disabled={locks.filters}
               />
             </label>
             <label>
-              Statuses (CSV)
-              <input
-                type="text"
-                value={state.statuses || ''}
-                onChange={(e) => setField('statuses', e.target.value || undefined)}
+              Sort
+              <select
+                value={draftState.sort || 'dateAsc'}
+                onChange={(e) => setField('sort', e.target.value as FinderState['sort'])}
                 disabled={locks.filters}
-              />
-            </label>
-            <label>
-              Seasons (CSV)
-              <input
-                type="text"
-                value={state.seasons || ''}
-                onChange={(e) => setField('seasons', e.target.value || undefined)}
-                disabled={locks.filters}
-              />
-            </label>
-            <label>
-              Series (CSV)
-              <input
-                type="text"
-                value={state.series || ''}
-                onChange={(e) => setField('series', e.target.value || undefined)}
-                disabled={locks.filters}
-              />
+              >
+                <option value="dateAsc">Date (Earliest)</option>
+                <option value="dateDesc">Date (Latest)</option>
+                <option value="nameAsc">Name (A-Z)</option>
+                <option value="nameDesc">Name (Z-A)</option>
+              </select>
             </label>
           </div>
-        </details>
-      </section>
 
-      <section className="sh-results">
-        {loading && <p className="sh-status">Loading matches…</p>}
-        {error && <p className="sh-status error">{error}</p>}
-        {!loading && !error && !matches.length && <p className="sh-status">No matches found for the current filters.</p>}
+          <details className="sh-advanced" open={!locks.filters && Boolean(draftState.types || draftState.subDisciplines || draftState.tiers || draftState.statuses || draftState.seasons || draftState.series)}>
+            <summary>Advanced filters</summary>
+            <div className="sh-field-group">
+              <label>
+                Series mode
+                <select
+                  value={draftState.seriesMode || 'or'}
+                  onChange={(e) => setField('seriesMode', e.target.value === 'and' ? 'and' : 'or')}
+                  disabled={locks.filters}
+                >
+                  <option value="or">Any selected series</option>
+                  <option value="and">All selected series</option>
+                </select>
+              </label>
+              {finderMode === 'clubs' ? (
+                <label>
+                  Min events
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={draftState.minEvents ?? ''}
+                    onChange={(e) => setField('minEvents', e.target.value === '' ? undefined : Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                    disabled={locks.filters}
+                  />
+                </label>
+              ) : null}
+            </div>
+            <div className="sh-filter-groups">
+              {([
+                ['types', finderMode === 'clubs' ? 'Club Disciplines' : 'Match Types', availableFilters.types, draftState.types],
+                ['subDisciplines', 'Sub-disciplines', availableFilters.subDisciplines, draftState.subDisciplines],
+                ['tiers', 'Match Tiers', availableFilters.tiers, draftState.tiers],
+                ['statuses', 'Statuses', availableFilters.statuses, draftState.statuses],
+                ['seasons', 'Seasons', availableFilters.seasons, draftState.seasons],
+                ['series', 'Series', availableFilters.series, draftState.series],
+              ] as const).map(([key, label, optionsList, currentCsv]) => {
+                const selected = new Set(csvToList(currentCsv));
+                const previewCount = 10;
+                const expanded = !!expandedFilterGroups[key];
+                const visible = expanded ? optionsList : optionsList.slice(0, previewCount);
+                const hasOverflow = optionsList.length > previewCount;
+                return (
+                  <fieldset key={key} className="sh-filter-group" disabled={locks.filters}>
+                    <legend>{label}</legend>
+                    {optionsList.length ? (
+                      <div className="sh-filter-options">
+                        {visible.map((option) => (
+                          <label key={option} className={`sh-chip ${selected.has(option) ? 'active' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(option)}
+                              onChange={() => toggleCsvFilter(key, option)}
+                              disabled={locks.filters}
+                            />
+                            <span>{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="sh-subtle">Options appear as matches load.</p>
+                    )}
+                    {hasOverflow ? (
+                      <button
+                        type="button"
+                        className="sh-filter-more"
+                        onClick={() =>
+                          setExpandedFilterGroups((prev) => ({
+                            ...prev,
+                            [key]: !expanded,
+                          }))
+                        }
+                      >
+                        {expanded ? 'Show fewer' : `Show ${optionsList.length - previewCount} more`}
+                      </button>
+                    ) : null}
+                  </fieldset>
+                );
+              })}
+            </div>
+          </details>
+        </section>
 
-        {!loading && !error && matches.length > 0 && (
-          <div className="sh-results-body">
-            {state.view === 'map' && (
-              <MapView
-                matches={matches}
-                center={{ lat: state.lat, lng: state.lng }}
-                radius={state.radius}
-                locked={locks.location}
-                onCenterChange={(coords) => setState((prev) => ({ ...prev, ...coords }))}
-              />
-            )}
-            {state.view === 'list' && <ListView matches={matches} />}
-            {state.view === 'calendar' && <CalendarView matches={matches} />}
-          </div>
-        )}
-      </section>
+        <section className="sh-results">
+          {hasPendingChanges && !loading && (
+            <p className="sh-status">Filters changed. Click Update to refresh results.</p>
+          )}
+          {loading && <p className="sh-status">Loading matches…</p>}
+          {error && <p className="sh-status error">{error}</p>}
+          {!loading && !error && !matches.length && <p className="sh-status">No matches found for the current filters.</p>}
+
+          {!loading && !error && matches.length > 0 && (
+            <div className="sh-results-body">
+              {draftState.view === 'map' && (
+                <MapView
+                  matches={matches}
+                  center={{ lat: appliedState.lat, lng: appliedState.lng }}
+                  radius={appliedState.radius}
+                  locked={locks.location}
+                  onCenterChange={onMapCenterChange}
+                />
+              )}
+              {draftState.view === 'list' && (
+                <ListView
+                  matches={listMatchesForView as any}
+                  mode={finderMode}
+                  entityLinkMode={(options as any)?.entityLinkMode || 'external'}
+                  entityPathBases={(options as any)?.entityPathBases || {}}
+                  publicAppBase={String((options as any)?.poweredByUrl || '').trim()}
+                />
+              )}
+              {draftState.view === 'calendar' && <CalendarView matches={matches} />}
+              {draftState.view === 'chart' && <ChartView matches={listMatchesForView as any} mode={finderMode} />}
+            </div>
+          )}
+        </section>
+      </div>
 
       <footer className="sh-footer">
         <PoweredBy visible={showPoweredBy} url={poweredUrl} />
@@ -363,6 +1104,7 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
   const mapRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
+  const isProgrammaticMoveRef = useRef(false);
 
   useEffect(() => {
     if (!mapRef.current || instanceRef.current) return;
@@ -377,6 +1119,10 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
 
     if (!locked) {
       map.on('moveend', () => {
+        if (isProgrammaticMoveRef.current) {
+          isProgrammaticMoveRef.current = false;
+          return;
+        }
         const c = map.getCenter();
         onCenterChange({ lat: c.lat, lng: c.lng });
       });
@@ -387,15 +1133,25 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
     const map = instanceRef.current;
     if (!map) return;
     if (center.lat != null && center.lng != null) {
-      map.setView([center.lat, center.lng], 6);
-    } else if (matches.length) {
-      const withCoords = matches.filter((m) => typeof m.location?.lat === 'number' && typeof m.location?.lng === 'number');
-      if (withCoords.length) {
-        const bounds = L.latLngBounds(withCoords.map((m) => [m.location!.lat!, m.location!.lng!] as [number, number]));
-        map.fitBounds(bounds.pad(0.2));
+      const current = map.getCenter();
+      const moved = Math.abs(current.lat - center.lat) > 0.00001 || Math.abs(current.lng - center.lng) > 0.00001;
+      if (moved) {
+        isProgrammaticMoveRef.current = true;
+        map.setView([center.lat, center.lng], map.getZoom() || 6);
       }
     }
-  }, [center.lat, center.lng, matches]);
+  }, [center.lat, center.lng]);
+
+  useEffect(() => {
+    const map = instanceRef.current;
+    if (!map || center.lat != null || center.lng != null || !matches.length) return;
+    const withCoords = matches.filter((m) => typeof m.location?.lat === 'number' && typeof m.location?.lng === 'number');
+    if (withCoords.length) {
+      const bounds = L.latLngBounds(withCoords.map((m) => [m.location!.lat!, m.location!.lng!] as [number, number]));
+      isProgrammaticMoveRef.current = true;
+      map.fitBounds(bounds.pad(0.2));
+    }
+  }, [matches, center.lat, center.lng]);
 
   useEffect(() => {
     const layer = markersRef.current;
@@ -424,24 +1180,118 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
   return <div className="sh-map" ref={mapRef} role="region" aria-label="Match locations" />;
 };
 
-const ListView: React.FC<{ matches: MatchSummary[] }> = ({ matches }) => (
+const resolveEntityHref = (
+  mode: 'matches' | 'clubs',
+  id: string,
+  entityLinkMode: 'external' | 'local',
+  entityPathBases: Record<string, string>,
+  publicAppBase?: string
+): string => {
+  if (!id) return '#';
+  const entityType = mode === 'clubs' ? 'club' : 'match';
+  if (entityLinkMode === 'local') {
+    const localBase = String(entityPathBases?.[entityType] || '').trim().replace(/\/+$/, '');
+    if (localBase) return `${localBase}/${encodeURIComponent(id)}`;
+  }
+  const externalBase = String(publicAppBase || 'https://shootershub.fortneyengineering.com').trim().replace(/\/+$/, '');
+  return `${externalBase}/${mode === 'clubs' ? 'clubs' : 'matches'}/${encodeURIComponent(id)}`;
+};
+
+const ListView: React.FC<{
+  matches: MatchSummary[];
+  mode: 'matches' | 'clubs';
+  entityLinkMode: 'external' | 'local';
+  entityPathBases: Record<string, string>;
+  publicAppBase?: string;
+}> = ({ matches, mode, entityLinkMode, entityPathBases, publicAppBase }) => (
   <ul className="sh-list">
     {matches.map((match) => (
       <li key={match.id} className="sh-list-item">
-        <div>
-          <h3>{match.title || 'Match'}</h3>
-          <p className="sh-subtle">{formatDate(match.date)}{match.distanceMi != null ? ` · ${formatDistance(match.distanceMi)}` : ''}</p>
-          <p className="sh-subtle">{formatAddress(match.location)}</p>
-        </div>
-        <div className="sh-actions">
-          <a href={`https://shooters-hub.com/matches/${match.id}`} target="_blank" rel="noopener noreferrer">
-            View →
-          </a>
-        </div>
+        <MatchFinderListItem
+          title={match.title || 'Match'}
+          matchHref={resolveEntityHref(mode, match.id, entityLinkMode, entityPathBases, publicAppBase)}
+          ownerName={(match as any).clubName || (match as any).location?.name || ''}
+          date={match.date}
+          tier={(match as any).matchTier || (match as any).tier}
+          status={(match as any).status}
+          startTime={(match as any).startTime || (match as any).firstTime}
+          disciplines={(match as any).disciplines || (match as any).type}
+          subDisciplines={(match as any).subDiscipline}
+          series={(match as any).seriesIds}
+          scoringLabel={match.distanceMi != null ? formatDistance(match.distanceMi) : undefined}
+          directionsHref={
+            typeof (match as any)?.location?.lat === 'number' && typeof (match as any)?.location?.lng === 'number'
+              ? `https://www.google.com/maps/dir/?api=1&destination=${(match as any).location.lat},${(match as any).location.lng}`
+              : null
+          }
+          extraBadges={[formatAddress(match.location)].filter(Boolean)}
+        />
       </li>
     ))}
   </ul>
 );
+
+const ChartView: React.FC<{ matches: MatchSummary[]; mode: 'matches' | 'clubs' }> = ({ matches, mode }) => {
+  const rows = useMemo(() => {
+    const byEntity = new Map<string, {
+      key: string;
+      name: string;
+      months: Record<string, number>;
+      total: number;
+      nextDate?: string;
+    }>();
+    matches.forEach((match: any) => {
+      const name = mode === 'clubs'
+        ? String(match?.title || match?.clubName || match?.location?.name || match?.id || 'Club')
+        : String(match?.clubName || match?.location?.name || 'Unknown Club');
+      const key = mode === 'clubs' ? String(match?.id || name) : name.toLowerCase();
+      const month = (typeof match?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(match.date))
+        ? match.date.slice(0, 7)
+        : 'other';
+      const existing = byEntity.get(key) || { key, name, months: {}, total: 0, nextDate: undefined };
+      existing.months[month] = (existing.months[month] || 0) + 1;
+      existing.total += 1;
+      const date = typeof match?.date === 'string' ? match.date : '';
+      if (date && (!existing.nextDate || date < existing.nextDate)) existing.nextDate = date;
+      byEntity.set(key, existing);
+    });
+    return Array.from(byEntity.values()).sort((a, b) => {
+      if (a.nextDate && b.nextDate) return a.nextDate.localeCompare(b.nextDate);
+      return b.total - a.total;
+    });
+  }, [matches, mode]);
+
+  const months = useMemo(() => {
+    const values = new Set<string>();
+    rows.forEach((row) => Object.keys(row.months).forEach((m) => values.add(m)));
+    return Array.from(values).sort();
+  }, [rows]);
+
+  return (
+    <div className="sh-chart">
+      <table className="sh-table">
+        <thead>
+          <tr>
+            <th>{mode === 'clubs' ? 'Club' : 'Host Club'}</th>
+            {months.map((month) => <th key={month}>{month === 'other' ? 'Other' : month}</th>)}
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td>{row.name}</td>
+              {months.map((month) => (
+                <td key={`${row.key}:${month}`}>{row.months[month] || '—'}</td>
+              ))}
+              <td>{row.total}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
 const CalendarView: React.FC<{ matches: MatchSummary[] }> = ({ matches }) => {
   const grouped = useMemo(() => groupByMonth(matches), [matches]);

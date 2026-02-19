@@ -44,6 +44,17 @@ class Shortcode {
 
     $from = trim((string)($opts['date_from'] ?? ''));
     $to = trim((string)($opts['date_to'] ?? ''));
+    if ($from === '' && $to === '') {
+      $months = self::parse_int($opts['default_date_window_months'] ?? 6);
+      if ($months !== null && $months > 0) {
+        $startTs = current_time('timestamp');
+        $endTs = strtotime('+' . $months . ' months', $startTs);
+        if ($endTs !== false) {
+          $from = wp_date('Y-m-d', $startTs);
+          $to = wp_date('Y-m-d', $endTs);
+        }
+      }
+    }
     if ($from !== '') $filters['from'] = $from;
     if ($to !== '') $filters['to'] = $to;
 
@@ -106,6 +117,8 @@ class Shortcode {
       'lockedClubId' => 'lockedClubId',
       'hideDistanceFilters' => 'hideDistanceFilters',
       'publicAppBase' => 'publicAppBase',
+      'entityLinkMode' => 'entityLinkMode',
+      'layout' => 'controlsLayout',
     ];
 
     foreach ($map as $attrKey => $filterKey) {
@@ -126,6 +139,16 @@ class Shortcode {
       }
       if ($attrKey === 'publicAppBase') {
         $finder[$filterKey] = esc_url_raw((string)$value);
+        continue;
+      }
+      if ($attrKey === 'entityLinkMode') {
+        $mode = strtolower((string)$value);
+        $finder[$filterKey] = $mode === 'local' ? 'local' : 'external';
+        continue;
+      }
+      if ($attrKey === 'layout') {
+        $layout = strtolower((string)$value);
+        $finder[$filterKey] = $layout === 'top' ? 'top' : 'left';
         continue;
       }
       if ($attrKey === 'lockedClubId') {
@@ -170,6 +193,15 @@ class Shortcode {
     return $finder;
   }
 
+  private static function entity_path_bases(): array {
+    return [
+      'match' => untrailingslashit(home_url('/match')),
+      'club' => untrailingslashit(home_url('/club')),
+      'series' => untrailingslashit(home_url('/series')),
+      'leaderboard' => untrailingslashit(home_url('/leaderboard')),
+    ];
+  }
+
   private static function render_finder(string $mode, array $atts = []): string {
     Assets::enqueue();
 
@@ -192,7 +224,10 @@ class Shortcode {
       ],
       'defaultRadius' => $defaultRadius,
       'hideDistanceFilters' => !empty($opts['hide_distance_filters']),
+      'controlsLayout' => 'left',
       'publicAppBase' => !empty($opts['public_app_base']) ? esc_url_raw((string)$opts['public_app_base']) : '',
+      'entityLinkMode' => !empty($opts['enable_local_entity_pages']) ? 'local' : 'external',
+      'entityPathBases' => self::entity_path_bases(),
       'initialFilters' => self::default_filters($opts),
     ];
 
@@ -237,5 +272,57 @@ class Shortcode {
 
   public static function render_club_finder($atts = []): string {
     return self::render_finder('clubs', (array)$atts);
+  }
+
+  public static function render_entity_page($atts = []): string {
+    Assets::enqueue();
+
+    $opts = get_option(Admin::OPT, []);
+    if (!is_array($opts)) $opts = [];
+    $attrs = self::sanitize_attrs((array)$atts);
+    $route = EntityPages::current_context();
+
+    $entityType = strtolower((string)($attrs['type'] ?? $route['entityType'] ?? ''));
+    if (!in_array($entityType, ['match', 'club', 'series', 'leaderboard'], true)) {
+      $entityType = 'match';
+    }
+    $entityId = trim((string)($attrs['id'] ?? $route['entityId'] ?? ''));
+
+    $theme = self::theme($opts);
+    if (!empty($attrs['themeTokens'])) {
+      $decoded = json_decode((string)$attrs['themeTokens'], true);
+      if (is_array($decoded)) {
+        $tokens = [];
+        foreach ($decoded as $key => $value) {
+          if (is_scalar($value)) $tokens[(string)$key] = (string)$value;
+        }
+        if (!empty($tokens)) $theme['tokens'] = $tokens;
+      }
+    }
+
+    $config = [
+      'type' => 'entity-page',
+      'entityType' => $entityType,
+      'entityId' => $entityId,
+      'apiBase' => esc_url_raw(get_rest_url(null, 'shooters-hub/v1/proxy')),
+      'olcBase' => esc_url_raw(get_rest_url(null, 'shooters-hub/v1/proxy/olc')),
+      'finder' => [
+        'publicAppBase' => !empty($opts['public_app_base']) ? esc_url_raw((string)$opts['public_app_base']) : '',
+        'entityLinkMode' => !empty($opts['enable_local_entity_pages']) ? 'local' : 'external',
+        'entityPathBases' => self::entity_path_bases(),
+      ],
+      'theme' => $theme,
+      'poweredByLockedOn' => true,
+    ];
+
+    $id = 'sh-embed-' . wp_generate_uuid4();
+    $json = wp_json_encode($config, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    ob_start(); ?>
+      <div id="<?php echo esc_attr($id); ?>"
+           class="sh-embed sh-embed-entity sh-embed-entity-<?php echo esc_attr($entityType); ?>"
+           data-sh-config="<?php echo esc_attr($json); ?>"></div>
+    <?php
+    return trim(ob_get_clean());
   }
 }
