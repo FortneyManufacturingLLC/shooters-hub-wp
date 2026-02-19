@@ -2,7 +2,7 @@
 Contributors: fortneyengineering
 Requires at least: 6.0
 Tested up to: 6.6
-Stable tag: 1.0.1
+Stable tag: 0.1.2
 License: GPLv2 or later
 
 Embed the Shooters Hub Match Finder and Club Finder on any WordPress site.

@@ -1,7 +1,7 @@
 {
   "name": "shooters-hub-match-finder-plugin",
   "private": true,
-  "version": "1.0.1",
+  "version": "0.1.2",
   "scripts": {
     "clean:src-js": "find src -maxdepth 1 -name '*.js' -delete",
     "prebuild": "npm run clean:src-js",
