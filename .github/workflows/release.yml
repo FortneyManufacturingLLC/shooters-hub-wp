@@ -36,7 +36,6 @@ jobs:
         run: npm run release:verify
 
   build-and-release:
-    if: github.event_name == 'workflow_dispatch'
     needs: smoke-test
     runs-on: ubuntu-latest
     steps:
@@ -49,10 +48,13 @@ jobs:
         id: version
         run: |
           VERSION=""
+          TAG=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
+            TAG="v${VERSION#v}"
           elif [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
+            TAG="${{ github.event.release.tag_name }}"
+            VERSION="$TAG"
           fi
           VERSION=${VERSION#v}
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -60,6 +62,7 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -75,6 +78,7 @@ jobs:
           fi
 
       - name: Bump version
+        if: github.event_name == 'workflow_dispatch'
         run: npm run bump-version -- ${{ steps.version.outputs.version }}
 
       - name: Verify release bundle + smoke test
@@ -84,6 +88,7 @@ jobs:
         run: rm -rf node_modules
 
       - name: Commit release changes
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "Shooters Hub Bot"
           git config user.email "engineering@fortneyengineering.com"
@@ -96,9 +101,10 @@ jobs:
           fi
 
       - name: Create tag
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          git tag -f "v${{ steps.version.outputs.version }}"
-          git push -f origin "v${{ steps.version.outputs.version }}"
+          git tag -f "${{ steps.version.outputs.tag }}"
+          git push -f origin "${{ steps.version.outputs.tag }}"
 
       - name: Create release artifact
         run: |
@@ -109,7 +115,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
           name: Shooters Hub v${{ steps.version.outputs.version }}
           draft: false
           generate_release_notes: true

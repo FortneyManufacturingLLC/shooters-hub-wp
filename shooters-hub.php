@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Shooters Hub
  * Description: Embeddable Match Finder and Club Finder powered by The Shooters Hub.
- * Version: 0.1.2
+ * Version: 1.0.1
  * Author: Fortney Engineering
  * Text Domain: shooters-hub
  * Update URI: https://updates.shooters-hub.com/plugins/shooters-hub
@@ -11,7 +11,7 @@
 if (!defined('ABSPATH')) exit;
 
 if (!defined('SH_PLUGIN_VERSION')) {
-  define('SH_PLUGIN_VERSION', '0.1.2');
+  define('SH_PLUGIN_VERSION', '1.0.1');
 }
 
 // Autoload
