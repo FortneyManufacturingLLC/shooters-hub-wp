@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
-import MatchFinderPage from '@/components/MatchFinderPage.tsx';
-import type { EmbedConfig, FinderFilters } from './types';
+import { MatchFinder } from './match-finder';
+import type { EmbedConfig } from './types';
 
 interface AppProps {
   config: EmbedConfig;
@@ -21,26 +21,6 @@ const toNumber = (value: unknown): number | undefined => {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
-};
-
-const normalizeFilters = (raw?: FinderFilters): Partial<any> | undefined => {
-  if (!raw) return undefined;
-  return {
-    types: Array.isArray(raw.types) ? raw.types : [],
-    subDisciplines: Array.isArray(raw.subDisciplines) ? raw.subDisciplines : [],
-    tiers: Array.isArray(raw.tiers) ? raw.tiers : [],
-    statuses: Array.isArray(raw.statuses) ? raw.statuses : [],
-    series: Array.isArray(raw.series) ? raw.series : [],
-    seriesMode: raw.seriesMode === 'and' ? 'and' : 'or',
-    from: raw.from,
-    to: raw.to,
-    radius: toNumber(raw.radius),
-    zip: raw.zip,
-    lat: toNumber(raw.lat),
-    lng: toNumber(raw.lng),
-    sort: raw.sort,
-    minEvents: toNumber(raw.minEvents),
-  };
 };
 
 const applyTheme = (node: HTMLElement, config?: EmbedConfig['theme']) => {
@@ -75,30 +55,39 @@ export const ShootersHubApp: React.FC<AppProps> = ({ config, node }) => {
     return { lat, lng };
   }, [config.finder?.defaultCenter?.lat, config.finder?.defaultCenter?.lng]);
 
-  const defaultRadius = toNumber(config.finder?.defaultRadius);
-  const initialFilters = useMemo(() => {
-    const base = normalizeFilters(config.finder?.initialFilters) || {};
-    if (defaultCenter) {
-      if (base.lat == null) base.lat = defaultCenter.lat;
-      if (base.lng == null) base.lng = defaultCenter.lng;
-    }
-    if (defaultRadius != null && base.radius == null) {
-      base.radius = defaultRadius;
-    }
-    return base;
-  }, [config.finder?.initialFilters, defaultCenter, defaultRadius]);
+  const options = useMemo(() => {
+    const initial = config.finder?.initialFilters;
+    return {
+      allowedViews,
+      defaults: {
+        view: config.finder?.defaultView,
+        lat: toNumber(initial?.lat) ?? defaultCenter?.lat,
+        lng: toNumber(initial?.lng) ?? defaultCenter?.lng,
+        radius: toNumber(initial?.radius) ?? toNumber(config.finder?.defaultRadius),
+        from: initial?.from,
+        to: initial?.to,
+        types: Array.isArray(initial?.types) ? initial?.types.join(',') : undefined,
+        tiers: Array.isArray(initial?.tiers) ? initial?.tiers.join(',') : undefined,
+        statuses: Array.isArray(initial?.statuses) ? initial?.statuses.join(',') : undefined,
+        series: Array.isArray(initial?.series) ? initial?.series.join(',') : undefined,
+      },
+      locks: {
+        view: false,
+        location: !!config.finder?.hideDistanceFilters,
+        radius: !!config.finder?.hideDistanceFilters,
+        filters: false,
+      },
+      radiusLimits: { min: 5, max: 500 },
+      showPoweredBy: true,
+      poweredByUrl: config.finder?.publicAppBase,
+    };
+  }, [allowedViews, config.finder, defaultCenter?.lat, defaultCenter?.lng]);
 
   return (
-    <MatchFinderPage
-      mode={config.mode}
-      allowedViews={allowedViews as any}
-      defaultView={config.finder?.defaultView as any}
-      defaultCenter={defaultCenter}
-      defaultRadius={defaultRadius}
-      hideDistanceFilters={!!config.finder?.hideDistanceFilters}
-      lockedClubId={config.finder?.lockedClubId}
-      siteBaseUrlOverride={config.finder?.publicAppBase}
-      initialFilters={initialFilters as any}
+    <MatchFinder
+      restBase={config.apiBase}
+      options={options as any}
+      attrs={undefined}
     />
   );
 };
