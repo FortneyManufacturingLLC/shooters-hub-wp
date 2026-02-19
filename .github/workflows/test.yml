@@ -19,7 +19,12 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm ci --prefer-online --no-fund
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --prefer-online --no-fund
+          else
+            npm install --prefer-online --no-fund
+          fi
 
       - name: Build plugin bundle
         run: npm run build

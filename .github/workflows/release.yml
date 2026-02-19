@@ -25,7 +25,12 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm ci --prefer-online --no-fund
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --prefer-online --no-fund
+          else
+            npm install --prefer-online --no-fund
+          fi
 
       - name: WordPress activation smoke test
         run: npm run release:verify
@@ -62,7 +67,12 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm ci --prefer-online --no-fund
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --prefer-online --no-fund
+          else
+            npm install --prefer-online --no-fund
+          fi
 
       - name: Bump version
         run: npm run bump-version -- ${{ steps.version.outputs.version }}
