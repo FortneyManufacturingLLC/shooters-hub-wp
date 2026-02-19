@@ -18,10 +18,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Verify bundled assets exist
-        run: |
-          test -f build/match-finder.js
-          test -f build/match-finder.css
+      - name: Install dependencies
+        run: npm ci --prefer-online --no-fund
+
+      - name: Build plugin bundle
+        run: npm run build
 
       - name: WordPress activation smoke test
         run: ./scripts/ci-smoke-test.sh

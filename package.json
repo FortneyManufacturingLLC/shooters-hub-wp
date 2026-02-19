@@ -6,6 +6,8 @@
     "clean:src-js": "find src -maxdepth 1 -name '*.js' -delete",
     "prebuild": "npm run clean:src-js",
     "build": "vite build",
+    "smoke-test": "./scripts/ci-smoke-test.sh",
+    "release:verify": "npm run build && npm run smoke-test",
     "bump-version": "node scripts/bump-version.mjs"
   },
   "dependencies": {

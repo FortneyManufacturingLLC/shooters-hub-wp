@@ -15,7 +15,12 @@ if [ ! -f "shooters-hub.php" ]; then
 fi
 
 if [ ! -f "build/match-finder.js" ] || [ ! -f "build/match-finder.css" ]; then
-  echo "Missing built assets in build/. Run npm run build first." >&2
+  echo "Built assets missing in build/. Running npm run build..." >&2
+  npm run build
+fi
+
+if [ ! -f "build/match-finder.js" ] || [ ! -f "build/match-finder.css" ]; then
+  echo "Missing built assets in build/ after build attempt." >&2
   exit 1
 fi
 
