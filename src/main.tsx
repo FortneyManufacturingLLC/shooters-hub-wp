@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import type { EmbedConfig } from './types';
 import { ShootersHubApp } from './App';
-import '../../web-app/app/globals.css';
+import './styles.css';
 
 declare global {
   interface Window {
