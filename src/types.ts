@@ -27,6 +27,7 @@ export interface FinderConfig {
   controlsLayout?: 'left' | 'top';
   lockedClubId?: string;
   publicAppBase?: string;
+  defaultDateWindowMonths?: number;
   entityLinkMode?: 'external' | 'local';
   entityPathBases?: Record<string, string>;
   initialFilters?: FinderFilters;

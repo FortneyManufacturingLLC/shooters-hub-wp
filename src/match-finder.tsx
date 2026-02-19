@@ -1,14 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import { fetchMatches, mergeDefaults, type MatchQuery } from './api';
 import type { MatchSummary, PluginOptions, ViewMode } from './types';
-import { clamp, formatAddress, formatDate, formatDistance, groupByMonth, sortMatchesByDate } from './utils';
+import { clamp, formatAddress, formatDate, formatDistance, sortMatchesByDate } from './utils';
 import { PoweredBy } from './powered-by';
 import { MatchFinderListItem } from './MatchFinderListItem';
+
+const DISCIPLINE_NAMES: Record<string, string> = {
+  PR: 'Precision Rifle',
+  PS: 'Practical Shooting',
+  SG: 'Shot Gun',
+  CW: 'Cowboy Western',
+  BR: 'Benchrest',
+  SPC: 'Specialty events/other',
+  ARCH: 'Archery',
+  MTS: 'Mounted Shooting',
+};
+
+const SUB_DISCIPLINE_NAMES: Record<string, string> = {
+  RF: 'Rimfire',
+  CF: 'Centerfire',
+  AG: 'Airgun',
+  '1G': '1 Gun',
+  '2G': '2 Gun',
+  '3G': '3 Gun',
+};
 
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -96,6 +119,89 @@ const normalizeLabel = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+};
+
+const titleCase = (value: string): string =>
+  value
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const humanizeDiscipline = (value: string): string => {
+  const key = String(value || '').trim().toUpperCase();
+  return DISCIPLINE_NAMES[key] || titleCase(String(value || '').replace(/[_-]+/g, ' '));
+};
+
+const humanizeSubDiscipline = (value: string): string => {
+  const key = String(value || '').trim().toUpperCase();
+  return SUB_DISCIPLINE_NAMES[key] || titleCase(String(value || '').replace(/[_-]+/g, ' '));
+};
+
+const prettySeriesLabel = (value: string): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return raw;
+  if (/^[a-z0-9_-]+$/.test(raw)) return raw.toUpperCase();
+  return raw;
+};
+
+const resolveMatchTitle = (match: any): string => {
+  const candidates = [match?.title, match?.name, match?.matchTitle, match?.eventTitle, match?.id];
+  for (const item of candidates) {
+    const text = normalizeLabel(item);
+    if (text) return text;
+  }
+  return 'Match';
+};
+
+const parseNumberOrUndefined = (value: string | null): number | undefined => {
+  if (value == null || value.trim() === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const parseStateFromQuery = (): Partial<FinderState> => {
+  if (typeof window === 'undefined') return {};
+  const qs = new URLSearchParams(window.location.search);
+  const out: Partial<FinderState> = {};
+  const view = qs.get('view');
+  if (view && ['map', 'list', 'calendar', 'chart'].includes(view)) out.view = view as ViewMode;
+  out.lat = parseNumberOrUndefined(qs.get('lat'));
+  out.lng = parseNumberOrUndefined(qs.get('lng'));
+  const radius = parseNumberOrUndefined(qs.get('radius'));
+  if (radius != null) out.radius = radius;
+  ['from', 'to', 'types', 'subDisciplines', 'tiers', 'statuses', 'seasons', 'series'].forEach((key) => {
+    const value = qs.get(key);
+    if (value != null && value !== '') (out as any)[key] = value;
+  });
+  const seriesMode = qs.get('seriesMode');
+  if (seriesMode === 'and' || seriesMode === 'or') out.seriesMode = seriesMode;
+  const minEvents = parseNumberOrUndefined(qs.get('minEvents'));
+  if (minEvents != null) out.minEvents = Math.max(0, Math.floor(minEvents));
+  const sort = qs.get('sort');
+  if (sort && ['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc'].includes(sort)) out.sort = sort as FinderState['sort'];
+  return out;
+};
+
+const toQueryEntries = (state: FinderState): Record<string, string> => {
+  const entries: Record<string, string> = {};
+  entries.view = state.view;
+  if (Number.isFinite(state.lat)) entries.lat = String(state.lat);
+  if (Number.isFinite(state.lng)) entries.lng = String(state.lng);
+  if (Number.isFinite(state.radius)) entries.radius = String(state.radius);
+  if (state.from) entries.from = state.from;
+  if (state.to) entries.to = state.to;
+  if (state.types) entries.types = state.types;
+  if (state.subDisciplines) entries.subDisciplines = state.subDisciplines;
+  if (state.tiers) entries.tiers = state.tiers;
+  if (state.statuses) entries.statuses = state.statuses;
+  if (state.seasons) entries.seasons = state.seasons;
+  if (state.series) entries.series = state.series;
+  if (state.seriesMode) entries.seriesMode = state.seriesMode;
+  if (Number.isFinite(state.minEvents)) entries.minEvents = String(state.minEvents);
+  if (state.sort) entries.sort = state.sort;
+  return entries;
 };
 
 type CachedTile = {
@@ -196,6 +302,7 @@ const parseTileToMatches = (tile: any): MatchSummary[] => {
   const idx = (name: string) => columns.indexOf(name);
   const iId = idx('id');
   const iTitle = idx('title');
+  const iName = Math.max(idx('name'), idx('matchTitle'));
   const iStart = idx('start');
   const iLat = idx('lat');
   const iLng = idx('lng');
@@ -227,7 +334,10 @@ const parseTileToMatches = (tile: any): MatchSummary[] => {
       const subDiscipline = iSubDiscipline >= 0 ? toList(row[iSubDiscipline]) : [];
       return {
         id,
-        title: iTitle >= 0 && row[iTitle] != null ? String(row[iTitle]) : id,
+        title:
+          (iTitle >= 0 && row[iTitle] != null ? String(row[iTitle]) : '') ||
+          (iName >= 0 && row[iName] != null ? String(row[iName]) : '') ||
+          id,
         date,
         location: {
           lat,
@@ -478,6 +588,7 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
   }), [defaultView, defaults, radiusLimits.max, radiusLimits.min]);
   const [draftState, setDraftState] = useState<FinderState>(defaultState);
   const [appliedState, setAppliedState] = useState<FinderState>(defaultState);
+  const didHydrateRef = useRef(false);
 
   useEffect(() => {
     const nextDefaults: FinderState = {
@@ -538,6 +649,29 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     }));
   }, [locks, defaults, defaultState, defaultView, radiusLimits]);
 
+  useEffect(() => {
+    if (didHydrateRef.current) return;
+    didHydrateRef.current = true;
+    const storageKey = `sh-finder:${finderMode}:state`;
+    let fromStorage: Partial<FinderState> = {};
+    try {
+      const raw = typeof window !== 'undefined' ? window.localStorage.getItem(storageKey) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') fromStorage = parsed;
+      }
+    } catch {}
+    const fromQuery = parseStateFromQuery();
+    const merged = {
+      ...defaultState,
+      ...fromStorage,
+      ...fromQuery,
+      radius: clamp(Number((fromQuery as any).radius ?? (fromStorage as any).radius ?? defaultState.radius), radiusLimits.min, radiusLimits.max),
+    } as FinderState;
+    setDraftState(merged);
+    setAppliedState(merged);
+  }, [defaultState, finderMode, radiusLimits.max, radiusLimits.min]);
+
   const [matches, setMatches] = useState<MatchSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -575,6 +709,23 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     sort: appliedState.sort,
   }), [appliedState]);
   const hasPendingChanges = filterSig !== appliedFilterSig;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storageKey = `sh-finder:${finderMode}:state`;
+    const snapshot: FinderState = { ...appliedState, view: draftState.view };
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+    } catch {}
+    const next = new URLSearchParams(window.location.search);
+    const entries = toQueryEntries(snapshot);
+    const keys = ['view', 'lat', 'lng', 'radius', 'from', 'to', 'types', 'subDisciplines', 'tiers', 'statuses', 'seasons', 'series', 'seriesMode', 'minEvents', 'sort'];
+    keys.forEach((key) => next.delete(key));
+    Object.entries(entries).forEach(([key, value]) => next.set(key, value));
+    const q = next.toString();
+    const url = `${window.location.pathname}${q ? `?${q}` : ''}${window.location.hash || ''}`;
+    window.history.replaceState({}, '', url);
+  }, [appliedState, draftState.view, finderMode]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -732,8 +883,6 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     sourceMatches.forEach((match: any) => {
       const typeCandidates = [
         ...(Array.isArray(match?.disciplines) ? match.disciplines : []),
-        ...(Array.isArray(match?.type) ? match.type : [match?.type]),
-        ...(Array.isArray(match?.matchType) ? match.matchType : [match?.matchType]),
       ];
       typeCandidates.forEach((entry) => {
         const label = normalizeLabel(entry);
@@ -849,8 +998,10 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
         location: { lat: club.lat, lng: club.lng, name: club.name },
         clubName: club.name,
         clubId: club.id,
+        upcomingCount: club.upcomingCount,
       } as any))
     : matches;
+  const mapMatchesForView = finderMode === 'clubs' ? (listMatchesForView as MatchSummary[]) : matches;
 
   return (
     <div className={`sh-match-finder sh-view-${draftState.view}`}>
@@ -864,8 +1015,12 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
             </p>
           )}
         </div>
-        <div className="sh-header-right">
-          <div className="sh-view-toggle" role="group" aria-label="View mode">
+        <div className="sh-header-right" />
+      </header>
+
+      <div className={`sh-layout sh-layout-${controlsLayout}`}>
+        <section className="sh-controls">
+          <div className="sh-view-toggle sh-view-toggle-inside" role="group" aria-label="View mode">
             {(allowedViews.length ? allowedViews : ['map', 'list', 'calendar', 'chart']).map((view) => (
               <button
                 key={view}
@@ -878,20 +1033,30 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="sh-button"
-            onClick={() => setAppliedState((prev) => ({ ...draftState, view: prev.view }))}
-            disabled={!hasPendingChanges || loading}
-            aria-disabled={!hasPendingChanges || loading}
-          >
-            {loading ? 'Updating…' : (hasPendingChanges ? 'Update' : 'Updated')}
-          </button>
-        </div>
-      </header>
-
-      <div className={`sh-layout sh-layout-${controlsLayout}`}>
-        <section className="sh-controls">
+          <div className="sh-controls-head">
+            <h3>Filters</h3>
+            <div className="sh-controls-head-actions">
+              <button
+                type="button"
+                className="sh-button secondary"
+                onClick={() => {
+                  setDraftState(defaultState);
+                  setAppliedState(defaultState);
+                }}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                className="sh-button"
+                onClick={() => setAppliedState((prev) => ({ ...draftState, view: prev.view }))}
+                disabled={!hasPendingChanges || loading}
+                aria-disabled={!hasPendingChanges || loading}
+              >
+                {loading ? 'Updating…' : (hasPendingChanges ? 'Update' : 'Updated')}
+              </button>
+            </div>
+          </div>
           {!hideDistanceFilters ? (
             <div className="sh-field-group">
               <label>
@@ -952,19 +1117,6 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
                 disabled={locks.filters}
               />
             </label>
-            <label>
-              Sort
-              <select
-                value={draftState.sort || 'dateAsc'}
-                onChange={(e) => setField('sort', e.target.value as FinderState['sort'])}
-                disabled={locks.filters}
-              >
-                <option value="dateAsc">Date (Earliest)</option>
-                <option value="dateDesc">Date (Latest)</option>
-                <option value="nameAsc">Name (A-Z)</option>
-                <option value="nameDesc">Name (Z-A)</option>
-              </select>
-            </label>
           </div>
 
           <details className="sh-advanced" open={!locks.filters && Boolean(draftState.types || draftState.subDisciplines || draftState.tiers || draftState.statuses || draftState.seasons || draftState.series)}>
@@ -997,7 +1149,7 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
             </div>
             <div className="sh-filter-groups">
               {([
-                ['types', finderMode === 'clubs' ? 'Club Disciplines' : 'Match Types', availableFilters.types, draftState.types],
+                ['types', 'Disciplines', availableFilters.types, draftState.types],
                 ['subDisciplines', 'Sub-disciplines', availableFilters.subDisciplines, draftState.subDisciplines],
                 ['tiers', 'Match Tiers', availableFilters.tiers, draftState.tiers],
                 ['statuses', 'Statuses', availableFilters.statuses, draftState.statuses],
@@ -1022,7 +1174,15 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
                               onChange={() => toggleCsvFilter(key, option)}
                               disabled={locks.filters}
                             />
-                            <span>{option}</span>
+                            <span>
+                              {key === 'types'
+                                ? humanizeDiscipline(option)
+                                : key === 'subDisciplines'
+                                ? humanizeSubDiscipline(option)
+                                : key === 'series'
+                                ? prettySeriesLabel(option)
+                                : option}
+                            </span>
                           </label>
                         ))}
                       </div>
@@ -1051,6 +1211,23 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
         </section>
 
         <section className="sh-results">
+          {draftState.view === 'list' ? (
+            <div className="sh-results-toolbar">
+              <label>
+                Sort
+                <select
+                  value={draftState.sort || 'dateAsc'}
+                  onChange={(e) => setField('sort', e.target.value as FinderState['sort'])}
+                  disabled={locks.filters}
+                >
+                  <option value="dateAsc">Date (Earliest)</option>
+                  <option value="dateDesc">Date (Latest)</option>
+                  <option value="nameAsc">Name (A-Z)</option>
+                  <option value="nameDesc">Name (Z-A)</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
           {hasPendingChanges && !loading && (
             <p className="sh-status">Filters changed. Click Update to refresh results.</p>
           )}
@@ -1062,9 +1239,10 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
             <div className="sh-results-body">
               {draftState.view === 'map' && (
                 <MapView
-                  matches={matches}
+                  matches={mapMatchesForView}
                   center={{ lat: appliedState.lat, lng: appliedState.lng }}
                   radius={appliedState.radius}
+                  mode={finderMode}
                   locked={locks.location}
                   onCenterChange={onMapCenterChange}
                 />
@@ -1096,14 +1274,15 @@ interface MapViewProps {
   matches: MatchSummary[];
   center: { lat?: number; lng?: number };
   radius: number;
+  mode: 'matches' | 'clubs';
   locked: boolean;
   onCenterChange: (coords: { lat?: number; lng?: number }) => void;
 }
 
-const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCenterChange }) => {
+const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, locked, onCenterChange }) => {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
+  const markersRef = useRef<any>(null);
   const isProgrammaticMoveRef = useRef(false);
 
   useEffect(() => {
@@ -1115,7 +1294,15 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
     });
     tileLayer.addTo(map);
     instanceRef.current = map;
-    markersRef.current = L.layerGroup().addTo(map);
+    const makeCluster = (L as any).markerClusterGroup;
+    markersRef.current = typeof makeCluster === 'function'
+      ? makeCluster({
+          showCoverageOnHover: false,
+          spiderfyOnMaxZoom: true,
+          disableClusteringAtZoom: 10,
+          maxClusterRadius: 60,
+        }).addTo(map)
+      : L.layerGroup().addTo(map);
 
     if (!locked) {
       map.on('moveend', () => {
@@ -1161,11 +1348,15 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
     matches.forEach((match) => {
       if (typeof match.location?.lat !== 'number' || typeof match.location?.lng !== 'number') return;
       const marker = L.marker([match.location.lat, match.location.lng]);
+      const title = resolveMatchTitle(match as any);
+      const line2 = mode === 'clubs'
+        ? `Upcoming matches: ${Math.max(0, Number((match as any).upcomingCount || 0) || 0)}`
+        : (match.date ? formatDate(match.date) : '');
       const html = `
         <div class="sh-popup">
-          <strong>${match.title || 'Match'}</strong><br />
-          ${match.date ? formatDate(match.date) : ''}<br />
-          ${match.location?.name || ''}
+          <strong>${title}</strong><br />
+          ${line2}<br />
+          ${(match as any)?.clubName || match.location?.name || ''}
         </div>
       `;
       marker.bindPopup(html);
@@ -1175,7 +1366,7 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, locked, onCe
       const circle = L.circle([center.lat, center.lng], { radius: radius * 1609.34, color: '#0ea5e9', weight: 1, fillOpacity: 0.05 });
       circle.addTo(layer);
     }
-  }, [matches, center.lat, center.lng, radius]);
+  }, [matches, center.lat, center.lng, radius, mode]);
 
   return <div className="sh-map" ref={mapRef} role="region" aria-label="Match locations" />;
 };
@@ -1208,16 +1399,19 @@ const ListView: React.FC<{
     {matches.map((match) => (
       <li key={match.id} className="sh-list-item">
         <MatchFinderListItem
-          title={match.title || 'Match'}
+          title={resolveMatchTitle(match)}
           matchHref={resolveEntityHref(mode, match.id, entityLinkMode, entityPathBases, publicAppBase)}
           ownerName={(match as any).clubName || (match as any).location?.name || ''}
           date={match.date}
           tier={(match as any).matchTier || (match as any).tier}
           status={(match as any).status}
           startTime={(match as any).startTime || (match as any).firstTime}
-          disciplines={(match as any).disciplines || (match as any).type}
-          subDisciplines={(match as any).subDiscipline}
-          series={(match as any).seriesIds}
+          disciplines={(Array.isArray((match as any).disciplines) ? (match as any).disciplines : [])
+            .map((d: string) => humanizeDiscipline(String(d)))}
+          subDisciplines={(Array.isArray((match as any).subDiscipline) ? (match as any).subDiscipline : [])
+            .map((d: string) => humanizeSubDiscipline(String(d)))}
+          series={(Array.isArray((match as any).seriesIds) ? (match as any).seriesIds : [])
+            .map((s: string) => prettySeriesLabel(String(s)))}
           scoringLabel={match.distanceMi != null ? formatDistance(match.distanceMi) : undefined}
           directionsHref={
             typeof (match as any)?.location?.lat === 'number' && typeof (match as any)?.location?.lng === 'number'
@@ -1232,92 +1426,105 @@ const ListView: React.FC<{
 );
 
 const ChartView: React.FC<{ matches: MatchSummary[]; mode: 'matches' | 'clubs' }> = ({ matches, mode }) => {
-  const rows = useMemo(() => {
-    const byEntity = new Map<string, {
-      key: string;
-      name: string;
-      months: Record<string, number>;
-      total: number;
-      nextDate?: string;
-    }>();
+  const monthCounts = useMemo(() => {
+    const counts = new Map<string, number>();
     matches.forEach((match: any) => {
-      const name = mode === 'clubs'
-        ? String(match?.title || match?.clubName || match?.location?.name || match?.id || 'Club')
-        : String(match?.clubName || match?.location?.name || 'Unknown Club');
-      const key = mode === 'clubs' ? String(match?.id || name) : name.toLowerCase();
-      const month = (typeof match?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(match.date))
-        ? match.date.slice(0, 7)
-        : 'other';
-      const existing = byEntity.get(key) || { key, name, months: {}, total: 0, nextDate: undefined };
-      existing.months[month] = (existing.months[month] || 0) + 1;
-      existing.total += 1;
       const date = typeof match?.date === 'string' ? match.date : '';
-      if (date && (!existing.nextDate || date < existing.nextDate)) existing.nextDate = date;
-      byEntity.set(key, existing);
+      const key = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : 'other';
+      counts.set(key, (counts.get(key) || 0) + 1);
     });
-    return Array.from(byEntity.values()).sort((a, b) => {
-      if (a.nextDate && b.nextDate) return a.nextDate.localeCompare(b.nextDate);
-      return b.total - a.total;
-    });
-  }, [matches, mode]);
+    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [matches]);
 
-  const months = useMemo(() => {
-    const values = new Set<string>();
-    rows.forEach((row) => Object.keys(row.months).forEach((m) => values.add(m)));
-    return Array.from(values).sort();
-  }, [rows]);
+  const disciplineCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    matches.forEach((match: any) => {
+      const values = Array.isArray(match?.disciplines) ? match.disciplines : [];
+      values.forEach((entry: any) => {
+        const raw = String(entry || '').trim();
+        if (!raw) return;
+        const key = humanizeDiscipline(raw);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [matches]);
 
   return (
-    <div className="sh-chart">
-      <table className="sh-table">
-        <thead>
-          <tr>
-            <th>{mode === 'clubs' ? 'Club' : 'Host Club'}</th>
-            {months.map((month) => <th key={month}>{month === 'other' ? 'Other' : month}</th>)}
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.key}>
-              <td>{row.name}</td>
-              {months.map((month) => (
-                <td key={`${row.key}:${month}`}>{row.months[month] || '—'}</td>
-              ))}
-              <td>{row.total}</td>
+    <div className="sh-chart-grid">
+      <div className="sh-chart-panel">
+        <h3>{mode === 'clubs' ? 'Clubs by Month' : 'Matches by Month'}</h3>
+        <table className="sh-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Total</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {monthCounts.map(([month, count]) => (
+              <tr key={month}>
+                <td>{month === 'other' ? 'Other' : month}</td>
+                <td>{count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="sh-chart-panel">
+        <h3>Disciplines</h3>
+        <table className="sh-table">
+          <thead>
+            <tr>
+              <th>Discipline</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {disciplineCounts.length ? disciplineCounts.map(([name, count]) => (
+              <tr key={name}>
+                <td>{name}</td>
+                <td>{count}</td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={2}>No discipline data.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
 
 const CalendarView: React.FC<{ matches: MatchSummary[] }> = ({ matches }) => {
-  const grouped = useMemo(() => groupByMonth(matches), [matches]);
-  const keys = Object.keys(grouped).sort();
+  const grouped = useMemo(() => {
+    const map = new Map<string, MatchSummary[]>();
+    matches.forEach((match) => {
+      const date = typeof match.date === 'string' ? match.date : 'Unknown';
+      if (!map.has(date)) map.set(date, []);
+      map.get(date)!.push(match);
+    });
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [matches]);
+
   return (
     <div className="sh-calendar">
-      {keys.map((key) => {
-        const [year, month] = key.split('-');
-        const title = key === 'Other'
-          ? 'Other'
-          : new Date(Number(year), Number(month) - 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-        return (
-          <section key={key} className="sh-calendar-month">
-            <h3>{title}</h3>
-            <ul>
-              {grouped[key].map((match) => (
-                <li key={match.id}>
-                  <span>{formatDate(match.date)}</span>
-                  <span>{match.title || 'Match'}</span>
-                  <span>{formatAddress(match.location)}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+      {grouped.map(([date, entries]) => (
+        <section key={date} className="sh-calendar-day">
+          <h3>{date === 'Unknown' ? 'Date Unknown' : formatDate(date)}</h3>
+          <ul>
+            {entries.map((match) => (
+              <li key={match.id}>
+                <span>{resolveMatchTitle(match)}</span>
+                <span>{(match as any)?.clubName || (match as any)?.location?.name || 'Unknown Club'}</span>
+                <span>{formatAddress(match.location)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 };

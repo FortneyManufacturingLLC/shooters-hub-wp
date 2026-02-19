@@ -226,6 +226,7 @@ class Shortcode {
       'hideDistanceFilters' => !empty($opts['hide_distance_filters']),
       'controlsLayout' => 'left',
       'publicAppBase' => !empty($opts['public_app_base']) ? esc_url_raw((string)$opts['public_app_base']) : '',
+      'defaultDateWindowMonths' => self::parse_int($opts['default_date_window_months'] ?? 6) ?? 6,
       'entityLinkMode' => !empty($opts['enable_local_entity_pages']) ? 'local' : 'external',
       'entityPathBases' => self::entity_path_bases(),
       'initialFilters' => self::default_filters($opts),

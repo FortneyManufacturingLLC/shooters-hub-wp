@@ -24,6 +24,17 @@ const toNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+const isoToday = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const isoMonthsFromToday = (months: number): string => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + Math.max(0, months));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const applyTheme = (node: HTMLElement, config?: EmbedConfig['theme']) => {
   const tokens = config?.tokens;
   if (!tokens || typeof tokens !== 'object') return;
@@ -64,6 +75,9 @@ export const ShootersHubApp: React.FC<AppProps> = ({ config, node }) => {
 
   const options = useMemo(() => {
     const initial = finderConfig.finder?.initialFilters;
+    const defaultMonths = Math.max(0, Number(finderConfig.finder?.defaultDateWindowMonths ?? 6) || 6);
+    const from = initial?.from || isoToday();
+    const to = initial?.to || isoMonthsFromToday(defaultMonths);
     return {
       mode: finderConfig.mode,
       allowedViews,
@@ -72,8 +86,8 @@ export const ShootersHubApp: React.FC<AppProps> = ({ config, node }) => {
         lat: toNumber(initial?.lat) ?? defaultCenter?.lat,
         lng: toNumber(initial?.lng) ?? defaultCenter?.lng,
         radius: toNumber(initial?.radius) ?? toNumber(finderConfig.finder?.defaultRadius),
-        from: initial?.from,
-        to: initial?.to,
+        from,
+        to,
         types: Array.isArray(initial?.types) ? initial?.types.join(',') : undefined,
         subDisciplines: Array.isArray(initial?.subDisciplines) ? initial?.subDisciplines.join(',') : undefined,
         tiers: Array.isArray(initial?.tiers) ? initial?.tiers.join(',') : undefined,

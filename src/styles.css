@@ -85,6 +85,28 @@
   gap: 1rem;
 }
 
+.sh-controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sh-controls-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sh-controls-head-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.sh-view-toggle-inside {
+  margin-bottom: 0.4rem;
+}
+
 .sh-layout {
   display: grid;
   gap: 1rem;
@@ -228,6 +250,27 @@
   min-height: 180px;
 }
 
+.sh-results-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.sh-results-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--sh-muted);
+}
+
+.sh-results-toolbar select {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--sh-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .sh-status {
   margin: 0;
   padding: 1rem;
@@ -247,8 +290,22 @@
   gap: 1rem;
 }
 
-.sh-chart {
-  overflow-x: auto;
+.sh-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.sh-chart-panel {
+  border: 1px solid var(--sh-border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.sh-chart-panel h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
 }
 
 .sh-footer {
@@ -256,7 +313,8 @@
 }
 
 .sh-map {
-  height: 420px;
+  height: min(68vh, 760px);
+  min-height: 560px;
   width: 100%;
   border-radius: 10px;
   overflow: hidden;
@@ -385,19 +443,19 @@
   gap: 1.5rem;
 }
 
-.sh-calendar-month h3 {
+.sh-calendar-day h3 {
   margin-top: 0;
 }
 
-.sh-calendar-month ul {
+.sh-calendar-day ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.sh-calendar-month li {
+.sh-calendar-day li {
   display: grid;
-  grid-template-columns: 120px 1fr 1fr;
+  grid-template-columns: 1.5fr 1fr 1.5fr;
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--sh-border);
   font-size: 0.95rem;
@@ -429,6 +487,38 @@
 .sh-card-title {
   margin: 0;
   font-size: 1.3rem;
+}
+
+.sh-entity-page {
+  background:
+    radial-gradient(150% 140% at 0% 0%, rgba(14, 165, 233, 0.12), transparent 55%),
+    #fff;
+}
+
+.sh-entity-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sh-entity-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sh-muted);
+  font-weight: 700;
+}
+
+.sh-entity-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.sh-entity-meta-grid p {
+  margin: 0;
 }
 
 .sh-card-meta,
@@ -498,7 +588,13 @@
     flex-direction: column;
     align-items: flex-start;
   }
-  .sh-calendar-month li {
+  .sh-calendar-day li {
     grid-template-columns: 1fr;
+  }
+  .sh-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .sh-map {
+    min-height: 420px;
   }
 }

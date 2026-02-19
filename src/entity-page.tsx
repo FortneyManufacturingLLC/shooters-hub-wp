@@ -26,6 +26,13 @@ const EmptyState: React.FC<{ entityType: string }> = ({ entityType }) => (
   <p className="sh-card sh-card-empty">No {entityType} ID was provided for this template route.</p>
 );
 
+const fallbackDescription = (type: string, title: string): string => {
+  if (type === 'match') return `${title} is published from Shooters Hub data and rendered through your local WordPress template.`;
+  if (type === 'club') return `${title} is synced from Shooters Hub with address, contact, and upcoming activity.`;
+  if (type === 'series') return `${title} is a Shooters Hub series page rendered with your site styling and layout controls.`;
+  return `${title} leaderboard is rendered from Shooters Hub scoring data.`;
+};
+
 export const EntityPage: React.FC<Props> = ({ config }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -89,18 +96,22 @@ export const EntityPage: React.FC<Props> = ({ config }) => {
 
   if (config.entityType === 'match') {
     if (!match) return <p className="sh-card sh-card-empty">Match not found.</p>;
+    const title = match.title || match.name || 'Match';
     return (
-      <article className="sh-card">
+      <article className="sh-entity-page sh-card">
         {match.imageUrl ? <div className="sh-card-image" style={{ backgroundImage: `url(${match.imageUrl})` }} aria-hidden /> : null}
         <div className="sh-card-body">
-          <h2 className="sh-card-title">{match.title || match.name || 'Match'}</h2>
-          <p className="sh-card-meta">
-            {formatDate(match.date || match.start)}
-            {match.matchTier ? ` · ${match.matchTier}` : ''}
-            {match.status ? ` · ${match.status}` : ''}
-          </p>
+          <header className="sh-entity-header">
+            <p className="sh-entity-kicker">Match</p>
+            <h2 className="sh-card-title">{title}</h2>
+            <p className="sh-card-meta">
+              {formatDate(match.date || match.start)}
+              {match.matchTier ? ` · ${match.matchTier}` : ''}
+              {match.status ? ` · ${match.status}` : ''}
+            </p>
+          </header>
           <p className="sh-card-location">{formatAddress(match.location)}</p>
-          {match.description ? <p className="sh-card-description">{match.description}</p> : null}
+          <p className="sh-card-description">{match.description || fallbackDescription('match', title)}</p>
           <p className="sh-card-actions">
             <a className="sh-button" href={toEntityHref(config, 'match', match.id)}>View Full Match</a>
           </p>
@@ -112,13 +123,22 @@ export const EntityPage: React.FC<Props> = ({ config }) => {
 
   if (config.entityType === 'club') {
     if (!club) return <p className="sh-card sh-card-empty">Club not found.</p>;
+    const title = club.name || 'Club';
     return (
-      <article className="sh-card">
+      <article className="sh-entity-page sh-card">
         {club.imageUrl ? <div className="sh-card-image" style={{ backgroundImage: `url(${club.imageUrl})` }} aria-hidden /> : null}
         <div className="sh-card-body">
-          <h2 className="sh-card-title">{club.name || 'Club'}</h2>
+          <header className="sh-entity-header">
+            <p className="sh-entity-kicker">Club</p>
+            <h2 className="sh-card-title">{title}</h2>
+          </header>
           <p className="sh-card-location">{formatAddress(club.location)}</p>
-          {club.description ? <p className="sh-card-description">{club.description}</p> : null}
+          <p className="sh-card-description">{club.description || fallbackDescription('club', title)}</p>
+          <div className="sh-entity-meta-grid">
+            {club.website ? <p><strong>Website:</strong> <a href={club.website} target="_blank" rel="noreferrer">{club.website}</a></p> : null}
+            {club.contactEmail ? <p><strong>Email:</strong> <a href={`mailto:${club.contactEmail}`}>{club.contactEmail}</a></p> : null}
+            {club.phone ? <p><strong>Phone:</strong> {club.phone}</p> : null}
+          </div>
           <p className="sh-card-actions">
             <a className="sh-button" href={toEntityHref(config, 'club', club.id)}>View Club</a>
           </p>
@@ -130,11 +150,20 @@ export const EntityPage: React.FC<Props> = ({ config }) => {
 
   if (config.entityType === 'series') {
     if (!series) return <p className="sh-card sh-card-empty">Series not found.</p>;
+    const title = series.title || series.name || series.shortName || series.abbreviation || 'Series';
     return (
-      <article className="sh-card">
+      <article className="sh-entity-page sh-card">
         <div className="sh-card-body">
-          <h2 className="sh-card-title">{series.title || series.name || series.shortName || series.abbreviation || 'Series'}</h2>
-          {series.description ? <p className="sh-card-description">{series.description}</p> : null}
+          <header className="sh-entity-header">
+            <p className="sh-entity-kicker">Series</p>
+            <h2 className="sh-card-title">{title}</h2>
+          </header>
+          <p className="sh-card-description">{series.description || fallbackDescription('series', title)}</p>
+          <div className="sh-entity-meta-grid">
+            {series.shortName ? <p><strong>Short Name:</strong> {series.shortName}</p> : null}
+            {series.abbreviation ? <p><strong>Abbreviation:</strong> {series.abbreviation}</p> : null}
+            {series.website ? <p><strong>Website:</strong> <a href={series.website} target="_blank" rel="noreferrer">{series.website}</a></p> : null}
+          </div>
           <p className="sh-card-actions">
             <a className="sh-button" href={toEntityHref(config, 'series', series.id)}>View Series</a>
           </p>
@@ -145,11 +174,16 @@ export const EntityPage: React.FC<Props> = ({ config }) => {
   }
 
   if (!season) return <p className="sh-card sh-card-empty">Leaderboard not found.</p>;
+  const title = season.leaderboard?.title || season.name || 'Leaderboard';
   return (
-    <article className="sh-card sh-card-leaderboard">
+    <article className="sh-entity-page sh-card sh-card-leaderboard">
       <div className="sh-card-body">
-        <h2 className="sh-card-title">{season.leaderboard?.title || season.name || 'Leaderboard'}</h2>
+        <header className="sh-entity-header">
+          <p className="sh-entity-kicker">Leaderboard</p>
+          <h2 className="sh-card-title">{title}</h2>
+        </header>
         {season.leaderboard?.updatedAt ? <p className="sh-card-meta">Updated {formatDate(season.leaderboard.updatedAt)}</p> : null}
+        <p className="sh-card-description">{fallbackDescription('leaderboard', title)}</p>
         {leaderboard.length ? (
           <table className="sh-table">
             <thead>
