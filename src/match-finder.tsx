@@ -77,6 +77,12 @@ interface ClubResultItem {
   seriesIds: string[];
 }
 
+interface CalendarDay {
+  date: Date;
+  iso: string;
+  isOutsideMonth: boolean;
+}
+
 const parseBoolean = (value: any, fallback: boolean): boolean => {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -153,6 +159,34 @@ const resolveMatchTitle = (match: any): string => {
     if (text) return text;
   }
   return 'Match';
+};
+
+const toIsoDate = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const startOfMonth = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), 1);
+
+const endOfMonth = (d: Date): Date => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+
+const addDays = (d: Date, n: number): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+const buildCalendarDays = (monthCursor: Date): CalendarDay[] => {
+  const start = startOfMonth(monthCursor);
+  const end = endOfMonth(monthCursor);
+  const startOffset = start.getDay();
+  const endOffset = 6 - end.getDay();
+  const gridStart = addDays(start, -startOffset);
+  const totalDays = Math.ceil((startOffset + end.getDate() + endOffset) / 7) * 7;
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < totalDays; i += 1) {
+    const date = addDays(gridStart, i);
+    days.push({
+      date,
+      iso: toIsoDate(date),
+      isOutsideMonth: date.getMonth() !== monthCursor.getMonth(),
+    });
+  }
+  return days;
 };
 
 const parseNumberOrUndefined = (value: string | null): number | undefined => {
@@ -676,6 +710,8 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [expandedFilterGroups, setExpandedFilterGroups] = useState<Record<string, boolean>>({});
+  const [monthCursor, setMonthCursor] = useState<Date>(() => startOfMonth(new Date()));
+  const [selectedDateISO, setSelectedDateISO] = useState<string | null>(null);
   const filterSig = useMemo(() => JSON.stringify({
     lat: draftState.lat,
     lng: draftState.lng,
@@ -690,7 +726,6 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     series: draftState.series,
     seriesMode: draftState.seriesMode,
     minEvents: draftState.minEvents,
-    sort: draftState.sort,
   }), [draftState]);
   const appliedFilterSig = useMemo(() => JSON.stringify({
     lat: appliedState.lat,
@@ -706,9 +741,12 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
     series: appliedState.series,
     seriesMode: appliedState.seriesMode,
     minEvents: appliedState.minEvents,
-    sort: appliedState.sort,
   }), [appliedState]);
   const hasPendingChanges = filterSig !== appliedFilterSig;
+
+  useEffect(() => {
+    setAppliedState((prev) => (prev.sort === draftState.sort ? prev : { ...prev, sort: draftState.sort }));
+  }, [draftState.sort]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1243,6 +1281,9 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
                   center={{ lat: appliedState.lat, lng: appliedState.lng }}
                   radius={appliedState.radius}
                   mode={finderMode}
+                  entityLinkMode={(options as any)?.entityLinkMode || 'external'}
+                  entityPathBases={(options as any)?.entityPathBases || {}}
+                  publicAppBase={String((options as any)?.poweredByUrl || '').trim()}
                   locked={locks.location}
                   onCenterChange={onMapCenterChange}
                 />
@@ -1256,8 +1297,28 @@ export const MatchFinder: React.FC<MatchFinderProps> = ({ restBase, options, att
                   publicAppBase={String((options as any)?.poweredByUrl || '').trim()}
                 />
               )}
-              {draftState.view === 'calendar' && <CalendarView matches={matches} />}
-              {draftState.view === 'chart' && <ChartView matches={listMatchesForView as any} mode={finderMode} />}
+              {draftState.view === 'calendar' && (
+                <CalendarView
+                  matches={matches}
+                  monthCursor={monthCursor}
+                  selectedDateISO={selectedDateISO}
+                  onPrevMonth={() => setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                  onNextMonth={() => setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                  onSelectDate={setSelectedDateISO}
+                  entityLinkMode={(options as any)?.entityLinkMode || 'external'}
+                  entityPathBases={(options as any)?.entityPathBases || {}}
+                  publicAppBase={String((options as any)?.poweredByUrl || '').trim()}
+                />
+              )}
+              {draftState.view === 'chart' && (
+                <ChartView
+                  matches={listMatchesForView as any}
+                  mode={finderMode}
+                  entityLinkMode={(options as any)?.entityLinkMode || 'external'}
+                  entityPathBases={(options as any)?.entityPathBases || {}}
+                  publicAppBase={String((options as any)?.poweredByUrl || '').trim()}
+                />
+              )}
             </div>
           )}
         </section>
@@ -1275,11 +1336,14 @@ interface MapViewProps {
   center: { lat?: number; lng?: number };
   radius: number;
   mode: 'matches' | 'clubs';
+  entityLinkMode: 'external' | 'local';
+  entityPathBases: Record<string, string>;
+  publicAppBase?: string;
   locked: boolean;
   onCenterChange: (coords: { lat?: number; lng?: number }) => void;
 }
 
-const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, locked, onCenterChange }) => {
+const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, entityLinkMode, entityPathBases, publicAppBase, locked, onCenterChange }) => {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<any>(null);
@@ -1299,7 +1363,6 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, locked
       ? makeCluster({
           showCoverageOnHover: false,
           spiderfyOnMaxZoom: true,
-          disableClusteringAtZoom: 10,
           maxClusterRadius: 60,
         }).addTo(map)
       : L.layerGroup().addTo(map);
@@ -1357,6 +1420,9 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, locked
           <strong>${title}</strong><br />
           ${line2}<br />
           ${(match as any)?.clubName || match.location?.name || ''}
+          <div style="margin-top:6px">
+            <a class="sh-popup-link" href="${resolveEntityHref(mode, String((match as any)?.id || ''), entityLinkMode, entityPathBases, publicAppBase)}">View Page</a>
+          </div>
         </div>
       `;
       marker.bindPopup(html);
@@ -1366,7 +1432,7 @@ const MapView: React.FC<MapViewProps> = ({ matches, center, radius, mode, locked
       const circle = L.circle([center.lat, center.lng], { radius: radius * 1609.34, color: '#0ea5e9', weight: 1, fillOpacity: 0.05 });
       circle.addTo(layer);
     }
-  }, [matches, center.lat, center.lng, radius, mode]);
+  }, [matches, center.lat, center.lng, radius, mode, entityLinkMode, entityPathBases, publicAppBase]);
 
   return <div className="sh-map" ref={mapRef} role="region" aria-label="Match locations" />;
 };
@@ -1425,106 +1491,158 @@ const ListView: React.FC<{
   </ul>
 );
 
-const ChartView: React.FC<{ matches: MatchSummary[]; mode: 'matches' | 'clubs' }> = ({ matches, mode }) => {
-  const monthCounts = useMemo(() => {
-    const counts = new Map<string, number>();
+const ChartView: React.FC<{
+  matches: MatchSummary[];
+  mode: 'matches' | 'clubs';
+  entityLinkMode: 'external' | 'local';
+  entityPathBases: Record<string, string>;
+  publicAppBase?: string;
+}> = ({ matches, mode, entityLinkMode, entityPathBases, publicAppBase }) => {
+  const months = useMemo(() => {
+    const set = new Set<string>();
+    matches.forEach((m: any) => {
+      if (typeof m?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.date)) set.add(m.date.slice(0, 7));
+    });
+    return Array.from(set).sort();
+  }, [matches]);
+
+  const rows = useMemo(() => {
+    const byRow = new Map<string, { key: string; label: string; itemsByMonth: Record<string, MatchSummary[]> }>();
     matches.forEach((match: any) => {
       const date = typeof match?.date === 'string' ? match.date : '';
-      const key = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(0, 7) : 'other';
-      counts.set(key, (counts.get(key) || 0) + 1);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      const month = date.slice(0, 7);
+      const label = mode === 'clubs'
+        ? String(match?.title || match?.clubName || match?.location?.name || 'Club')
+        : String(match?.clubName || match?.location?.name || 'Unknown Club');
+      const key = label.toLowerCase();
+      const row = byRow.get(key) || { key, label, itemsByMonth: {} };
+      if (!row.itemsByMonth[month]) row.itemsByMonth[month] = [];
+      row.itemsByMonth[month].push(match);
+      byRow.set(key, row);
     });
-    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [matches]);
-
-  const disciplineCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    matches.forEach((match: any) => {
-      const values = Array.isArray(match?.disciplines) ? match.disciplines : [];
-      values.forEach((entry: any) => {
-        const raw = String(entry || '').trim();
-        if (!raw) return;
-        const key = humanizeDiscipline(raw);
-        counts.set(key, (counts.get(key) || 0) + 1);
-      });
-    });
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  }, [matches]);
+    return Array.from(byRow.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [matches, mode]);
 
   return (
-    <div className="sh-chart-grid">
-      <div className="sh-chart-panel">
-        <h3>{mode === 'clubs' ? 'Clubs by Month' : 'Matches by Month'}</h3>
-        <table className="sh-table">
-          <thead>
-            <tr>
-              <th>Month</th>
-              <th>Total</th>
+    <div className="sh-chart">
+      <table className="sh-table sh-chart-table">
+        <thead>
+          <tr>
+            <th>{mode === 'clubs' ? 'Club' : 'Host Club'}</th>
+            {months.map((month) => <th key={month}>{month}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td>{row.label}</td>
+              {months.map((month) => {
+                const items = row.itemsByMonth[month] || [];
+                return (
+                  <td key={`${row.key}:${month}`} className="sh-chart-cell">
+                    {items.map((item) => (
+                      <a
+                        key={item.id}
+                        href={resolveEntityHref(mode, String(item.id), entityLinkMode, entityPathBases, publicAppBase)}
+                        className="sh-chart-day-badge"
+                        title={resolveMatchTitle(item)}
+                      >
+                        {(item.date || '').slice(8, 10)}
+                      </a>
+                    ))}
+                  </td>
+                );
+              })}
             </tr>
-          </thead>
-          <tbody>
-            {monthCounts.map(([month, count]) => (
-              <tr key={month}>
-                <td>{month === 'other' ? 'Other' : month}</td>
-                <td>{count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="sh-chart-panel">
-        <h3>Disciplines</h3>
-        <table className="sh-table">
-          <thead>
-            <tr>
-              <th>Discipline</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {disciplineCounts.length ? disciplineCounts.map(([name, count]) => (
-              <tr key={name}>
-                <td>{name}</td>
-                <td>{count}</td>
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={2}>No discipline data.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
 
-const CalendarView: React.FC<{ matches: MatchSummary[] }> = ({ matches }) => {
-  const grouped = useMemo(() => {
+const CalendarView: React.FC<{
+  matches: MatchSummary[];
+  monthCursor: Date;
+  selectedDateISO: string | null;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
+  onSelectDate: (iso: string | null) => void;
+  entityLinkMode: 'external' | 'local';
+  entityPathBases: Record<string, string>;
+  publicAppBase?: string;
+}> = ({ matches, monthCursor, selectedDateISO, onPrevMonth, onNextMonth, onSelectDate, entityLinkMode, entityPathBases, publicAppBase }) => {
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const days = useMemo(() => buildCalendarDays(monthCursor), [monthCursor]);
+  const matchesByDate = useMemo(() => {
     const map = new Map<string, MatchSummary[]>();
-    matches.forEach((match) => {
-      const date = typeof match.date === 'string' ? match.date : 'Unknown';
-      if (!map.has(date)) map.set(date, []);
-      map.get(date)!.push(match);
+    matches.forEach((m) => {
+      const iso = typeof m?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.date) ? m.date : null;
+      if (!iso) return;
+      if (!map.has(iso)) map.set(iso, []);
+      map.get(iso)!.push(m);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    return map;
   }, [matches]);
+  const selectedItems = selectedDateISO ? (matchesByDate.get(selectedDateISO) || []) : [];
 
   return (
-    <div className="sh-calendar">
-      {grouped.map(([date, entries]) => (
-        <section key={date} className="sh-calendar-day">
-          <h3>{date === 'Unknown' ? 'Date Unknown' : formatDate(date)}</h3>
-          <ul>
-            {entries.map((match) => (
-              <li key={match.id}>
-                <span>{resolveMatchTitle(match)}</span>
-                <span>{(match as any)?.clubName || (match as any)?.location?.name || 'Unknown Club'}</span>
-                <span>{formatAddress(match.location)}</span>
+    <div className="sh-calendar-grid-wrap">
+      <div className="sh-calendar-toolbar">
+        <button type="button" className="sh-button secondary" onClick={onPrevMonth}>Prev</button>
+        <strong>{monthCursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong>
+        <button type="button" className="sh-button secondary" onClick={onNextMonth}>Next</button>
+      </div>
+      <div className="sh-calendar-grid">
+        {weekdays.map((day) => (
+          <div key={day} className="sh-calendar-weekday">{day}</div>
+        ))}
+        {days.map((day) => {
+          const dayMatches = matchesByDate.get(day.iso) || [];
+          return (
+            <button
+              type="button"
+              key={day.iso}
+              className={`sh-calendar-cell ${day.isOutsideMonth ? 'outside' : ''} ${selectedDateISO === day.iso ? 'active' : ''}`}
+              onClick={() => onSelectDate(day.iso)}
+            >
+              <span className="sh-calendar-date">{day.date.getDate()}</span>
+              <span className="sh-calendar-count">{dayMatches.length ? `${dayMatches.length} events` : ''}</span>
+            </button>
+          );
+        })}
+      </div>
+      {selectedDateISO ? (
+        <div className="sh-calendar-selected">
+          <div className="sh-calendar-selected-head">
+            <h4>{formatDate(selectedDateISO)}</h4>
+            <button type="button" className="sh-button secondary" onClick={() => onSelectDate(null)}>Clear</button>
+          </div>
+          <ul className="sh-list">
+            {selectedItems.map((match) => (
+              <li key={match.id} className="sh-list-item">
+                <MatchFinderListItem
+                  title={resolveMatchTitle(match)}
+                  matchHref={resolveEntityHref('matches', String(match.id), entityLinkMode, entityPathBases, publicAppBase)}
+                  ownerName={(match as any).clubName || (match as any).location?.name || ''}
+                  date={match.date}
+                  tier={(match as any).matchTier || (match as any).tier}
+                  status={(match as any).status}
+                  disciplines={(Array.isArray((match as any).disciplines) ? (match as any).disciplines : []).map((d: string) => humanizeDiscipline(String(d)))}
+                  subDisciplines={(Array.isArray((match as any).subDiscipline) ? (match as any).subDiscipline : []).map((d: string) => humanizeSubDiscipline(String(d)))}
+                  series={(Array.isArray((match as any).seriesIds) ? (match as any).seriesIds : []).map((s: string) => prettySeriesLabel(String(s)))}
+                  directionsHref={
+                    typeof (match as any)?.location?.lat === 'number' && typeof (match as any)?.location?.lng === 'number'
+                      ? `https://www.google.com/maps/dir/?api=1&destination=${(match as any).location.lat},${(match as any).location.lng}`
+                      : null
+                  }
+                />
               </li>
             ))}
           </ul>
-        </section>
-      ))}
+        </div>
+      ) : null}
     </div>
   );
 };

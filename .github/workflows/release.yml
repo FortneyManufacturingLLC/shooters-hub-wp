@@ -1,123 +1,75 @@
-name: Package release
+name: Build and Release Plugin
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version (e.g. 1.0.2)' 
-        required: true
+  push:
+    tags:
+      - 'wp-mf-v*'
+      - 'v*'
   release:
     types: [published]
 
-permissions:
-  contents: write
-
 jobs:
-  smoke-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --prefer-online --no-fund
-          else
-            npm install --prefer-online --no-fund
-          fi
-
-      - name: WordPress activation smoke test
-        run: npm run release:verify
-
   build-and-release:
-    needs: smoke-test
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check out repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION=""
-          TAG=""
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-            TAG="v${VERSION#v}"
-          elif [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-            VERSION="$TAG"
-          fi
-          VERSION=${VERSION#v}
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid semantic version: $VERSION" >&2
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Derive version from tag/release
+        id: vars
+        shell: bash
+        run: |
+          REF="${GITHUB_REF##*/}"
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            REF="${GITHUB_REF_NAME}"
+          fi
+          VER="${REF#wp-mf-v}"
+          [ "$VER" = "$REF" ] && VER="${REF#v}"
+          [ -z "$VER" ] && VER="$REF"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "zip=shooters-hub-${VER}.zip" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
+        run: npm ci --prefer-online --no-fund
+
+      - name: Build bundle
+        run: npm run build
+
+      - name: Bump plugin version files
+        shell: bash
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci --prefer-online --no-fund
-          else
-            npm install --prefer-online --no-fund
-          fi
+          node scripts/bump-version.mjs "${{ steps.vars.outputs.version }}"
+          echo "Bumped version in source:"
+          grep -E "Version:|SH_PLUGIN_VERSION" shooters-hub.php
 
-      - name: Bump version
-        if: github.event_name == 'workflow_dispatch'
-        run: npm run bump-version -- ${{ steps.version.outputs.version }}
-
-      - name: Verify release bundle + smoke test
-        run: npm run release:verify
-
-      - name: Remove build-time dependencies
-        run: rm -rf node_modules
-
-      - name: Commit release changes
-        if: github.event_name == 'workflow_dispatch'
+      - name: Build release ZIP
+        shell: bash
         run: |
-          git config user.name "Shooters Hub Bot"
-          git config user.email "engineering@fortneyengineering.com"
-          git add .
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "chore: release v${{ steps.version.outputs.version }}"
-            git push
-          fi
+          mkdir -p dist/shooters-hub
+          rsync -av --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            --exclude ".DS_Store" \
+            ./ dist/shooters-hub/
+          echo "Version in release artifact:"
+          grep -E "Version:|SH_PLUGIN_VERSION" dist/shooters-hub/shooters-hub.php
+          (cd dist && zip -r "${{ steps.vars.outputs.zip }}" shooters-hub)
 
-      - name: Create tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git tag -f "${{ steps.version.outputs.tag }}"
-          git push -f origin "${{ steps.version.outputs.tag }}"
-
-      - name: Create release artifact
-        run: |
-          mkdir -p release
-          zip -r "release/shooters-hub-${{ steps.version.outputs.version }}.zip" . \
-            -x '*.git*' 'release/*' 'node_modules/*'
-
-      - name: Publish GitHub release
+      - name: Attach ZIP to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Shooters Hub v${{ steps.version.outputs.version }}
-          draft: false
-          generate_release_notes: true
-          files: |
-            release/shooters-hub-${{ steps.version.outputs.version }}.zip
+          tag_name: ${{ github.ref_name }}
+          name: Shooters Hub v${{ steps.vars.outputs.version }}
+          files: dist/${{ steps.vars.outputs.zip }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

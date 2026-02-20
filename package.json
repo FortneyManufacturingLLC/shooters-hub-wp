@@ -5,13 +5,14 @@
   "scripts": {
     "clean:src-js": "find src -maxdepth 1 -name '*.js' -delete",
     "sync:finder-ui": "node ./scripts/sync-finder-ui.mjs",
-    "prebuild": "npm run sync:finder-ui && npm run clean:src-js",
+    "prebuild": "npm run clean:src-js",
     "build": "vite build",
     "smoke-test": "./scripts/ci-smoke-test.sh",
     "release:verify": "npm run build && npm run smoke-test",
     "bump-version": "node scripts/bump-version.mjs"
   },
   "dependencies": {
+    "@shooters-hub/entity-ui": "file:../packages/entity-ui",
     "clsx": "^2.1.1",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
