@@ -15,6 +15,15 @@ class Shortcode {
     return is_numeric($value) ? intval($value) : null;
   }
 
+  private static function parse_bool($value, bool $default = false): bool {
+    if (is_bool($value)) return $value;
+    if (is_numeric($value)) return intval($value) === 1;
+    if (is_scalar($value)) {
+      return in_array(strtolower(trim((string)$value)), ['1', 'true', 'yes', 'on'], true);
+    }
+    return $default;
+  }
+
   private static function sanitize_attrs($atts): array {
     $out = [];
     foreach ((array)$atts as $key => $value) {
@@ -172,6 +181,25 @@ class Shortcode {
       $finder['initialFilters'][$filterKey] = self::parse_csv($attrs[$attrKey]);
     }
 
+    $boolMap = [
+      'lockView' => ['locks', 'view'],
+      'lockLocation' => ['locks', 'location'],
+      'lockRadius' => ['locks', 'radius'],
+      'lockFilters' => ['locks', 'filters'],
+      'showHeader' => ['ui', 'showHeader'],
+      'showViewToggle' => ['ui', 'showViewToggle'],
+      'showFiltersPanel' => ['ui', 'showFiltersPanel'],
+      'showResultsToolbar' => ['ui', 'showResultsToolbar'],
+      'showStatusMessages' => ['ui', 'showStatusMessages'],
+    ];
+    foreach ($boolMap as $attrKey => $path) {
+      if (!array_key_exists($attrKey, $attrs)) continue;
+      $raw = strtolower((string)$attrs[$attrKey]);
+      $value = in_array($raw, ['1', 'true', 'yes', 'on'], true);
+      if (!isset($finder[$path[0]]) || !is_array($finder[$path[0]])) $finder[$path[0]] = [];
+      $finder[$path[0]][$path[1]] = $value;
+    }
+
     if (isset($attrs['allowedViews'])) {
       $candidate = self::parse_csv($attrs['allowedViews']);
       $valid = $mode === 'clubs' ? ['map', 'list'] : ['map', 'list', 'calendar', 'chart'];
@@ -215,6 +243,8 @@ class Shortcode {
     $defaultLng = self::parse_float($opts['default_lng'] ?? null);
     $defaultRadius = self::parse_float($opts['default_radius'] ?? null);
 
+    $defaultLayout = strtolower(trim((string)($opts['default_layout'] ?? 'left'))) === 'top' ? 'top' : 'left';
+
     $finder = [
       'allowedViews' => $allowedViews,
       'defaultView' => $defaultView,
@@ -224,12 +254,25 @@ class Shortcode {
       ],
       'defaultRadius' => $defaultRadius,
       'hideDistanceFilters' => !empty($opts['hide_distance_filters']),
-      'controlsLayout' => 'left',
+      'controlsLayout' => $defaultLayout,
       'publicAppBase' => !empty($opts['public_app_base']) ? esc_url_raw((string)$opts['public_app_base']) : '',
       'defaultDateWindowMonths' => self::parse_int($opts['default_date_window_months'] ?? 6) ?? 6,
       'entityLinkMode' => !empty($opts['enable_local_entity_pages']) ? 'local' : 'external',
       'entityPathBases' => self::entity_path_bases(),
       'initialFilters' => self::default_filters($opts),
+      'locks' => [
+        'view' => self::parse_bool($opts['default_lock_view'] ?? 0),
+        'location' => self::parse_bool($opts['default_lock_location'] ?? 0),
+        'radius' => self::parse_bool($opts['default_lock_radius'] ?? 0),
+        'filters' => self::parse_bool($opts['default_lock_filters'] ?? 0),
+      ],
+      'ui' => [
+        'showHeader' => self::parse_bool($opts['default_show_header'] ?? 1, true),
+        'showViewToggle' => self::parse_bool($opts['default_show_view_toggle'] ?? 1, true),
+        'showFiltersPanel' => self::parse_bool($opts['default_show_filters_panel'] ?? 1, true),
+        'showResultsToolbar' => self::parse_bool($opts['default_show_results_toolbar'] ?? 1, true),
+        'showStatusMessages' => self::parse_bool($opts['default_show_status_messages'] ?? 1, true),
+      ],
     ];
 
     $finder = self::with_overrides($finder, $attrs, $mode);
@@ -273,6 +316,12 @@ class Shortcode {
 
   public static function render_club_finder($atts = []): string {
     return self::render_finder('clubs', (array)$atts);
+  }
+
+  public static function render_finder_suite($atts = []): string {
+    $attrs = self::sanitize_attrs((array)$atts);
+    $mode = strtolower((string)($attrs['mode'] ?? 'matches')) === 'clubs' ? 'clubs' : 'matches';
+    return self::render_finder($mode, $attrs);
   }
 
   public static function render_entity_page($atts = []): string {

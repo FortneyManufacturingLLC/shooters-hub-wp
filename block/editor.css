@@ -15,3 +15,20 @@
   margin: 0;
   font-size: 0.9rem;
 }
+
+.sh-block-preview-chip {
+  display: inline-block;
+  margin: 0.55rem 0.45rem 0 0;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.sh-block-preview-hint {
+  margin-top: 0.65rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}

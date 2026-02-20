@@ -44,6 +44,12 @@ register_activation_hook(__FILE__, ['SH\Admin', 'ensure_match_finder_page']);
 register_activation_hook(__FILE__, ['SH\EntityPages', 'flush_routes']);
 register_deactivation_hook(__FILE__, ['SH\EntityPages', 'flush_routes']);
 
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function(array $links): array {
+  $settingsUrl = admin_url('options-general.php?page=shooters-hub');
+  array_unshift($links, '<a href="' . esc_url($settingsUrl) . '">Settings</a>');
+  return $links;
+});
+
 // Plugin Update Checker (GitHub). Optional at runtime.
 $sh_puc = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
 if (file_exists($sh_puc)) {

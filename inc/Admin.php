@@ -34,6 +34,7 @@ class Admin {
     self::add_text('default_series_mode', 'Series Mode (or|and)', 'or', 'defaults');
     self::add_text('default_sort', 'Sort (dateAsc|dateDesc|nameAsc|nameDesc)', 'dateAsc', 'defaults');
     self::add_text('default_min_events', 'Club Finder Default Min Events', '', 'defaults');
+    self::add_text('default_layout', 'Default Controls Layout (left|top)', 'left', 'defaults');
 
     add_settings_section('views_match', 'Match Finder Views', '__return_false', self::OPT);
     self::add_text('match_allowed_views', 'Allowed Views (CSV)', 'map,list,calendar,chart', 'views_match');
@@ -49,6 +50,15 @@ class Admin {
     add_settings_section('behavior', 'Behavior', '__return_false', self::OPT);
     self::add_checkbox('hide_distance_filters', 'Hide distance filters', 'behavior');
     self::add_checkbox('enable_local_entity_pages', 'Use local WordPress entity links in finder results', 'behavior');
+    self::add_checkbox('default_show_header', 'Show header by default', 'behavior', true);
+    self::add_checkbox('default_show_view_toggle', 'Show view toggle by default', 'behavior', true);
+    self::add_checkbox('default_show_filters_panel', 'Show filters panel by default', 'behavior', true);
+    self::add_checkbox('default_show_results_toolbar', 'Show results toolbar by default', 'behavior', true);
+    self::add_checkbox('default_show_status_messages', 'Show status messages by default', 'behavior', true);
+    self::add_checkbox('default_lock_view', 'Lock view switcher by default', 'behavior');
+    self::add_checkbox('default_lock_location', 'Lock location controls by default', 'behavior');
+    self::add_checkbox('default_lock_radius', 'Lock radius control by default', 'behavior');
+    self::add_checkbox('default_lock_filters', 'Lock filters by default', 'behavior');
 
     add_settings_section('caching', 'Caching', '__return_false', self::OPT);
     self::add_text('cache_ttl', 'Cache TTL (seconds)', '60', 'caching');
@@ -76,6 +86,7 @@ class Admin {
       'default_series_mode',
       'default_sort',
       'default_min_events',
+      'default_layout',
       'match_allowed_views',
       'match_default_view',
       'club_allowed_views',
@@ -97,7 +108,19 @@ class Admin {
       $next['api_key'] = $current['api_key'] ?? '';
     }
 
-    $boolKeys = ['hide_distance_filters', 'enable_local_entity_pages'];
+    $boolKeys = [
+      'hide_distance_filters',
+      'enable_local_entity_pages',
+      'default_show_header',
+      'default_show_view_toggle',
+      'default_show_filters_panel',
+      'default_show_results_toolbar',
+      'default_show_status_messages',
+      'default_lock_view',
+      'default_lock_location',
+      'default_lock_radius',
+      'default_lock_filters',
+    ];
     foreach ($boolKeys as $key) {
       $next[$key] = !empty($input[$key]) ? 1 : 0;
     }

@@ -1,0 +1,15 @@
+{
+  "apiVersion": 2,
+  "name": "shooters-hub/finder-suite-display",
+  "title": "Finder Suite - Display",
+  "category": "widgets",
+  "icon": "visibility",
+  "description": "UI visibility and locking behavior for the parent Finder Suite block.",
+  "parent": ["shooters-hub/finder-suite"],
+  "supports": {
+    "html": false,
+    "reusable": false
+  },
+  "editorScript": "sh/block-editor",
+  "editorStyle": "sh/block-editor"
+}
