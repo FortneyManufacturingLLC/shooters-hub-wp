@@ -11,7 +11,7 @@ import { fetchMatches, mergeDefaults, type MatchQuery } from './api';
 import type { MatchSummary, PluginOptions, ViewMode } from './types';
 import { clamp, formatAddress, formatDate, formatDistance, sortMatchesByDate } from './utils';
 import { PoweredBy } from './powered-by';
-import { MatchFinderListItem } from './MatchFinderListItem';
+import { EntityListCard } from '@shooters-hub/entity-ui';
 
 const DISCIPLINE_NAMES: Record<string, string> = {
   PR: 'Precision Rifle',
@@ -1464,9 +1464,9 @@ const ListView: React.FC<{
   <ul className="sh-list">
     {matches.map((match) => (
       <li key={match.id} className="sh-list-item">
-        <MatchFinderListItem
+        <EntityListCard
           title={resolveMatchTitle(match)}
-          matchHref={resolveEntityHref(mode, match.id, entityLinkMode, entityPathBases, publicAppBase)}
+          href={resolveEntityHref(mode, match.id, entityLinkMode, entityPathBases, publicAppBase)}
           ownerName={(match as any).clubName || (match as any).location?.name || ''}
           date={match.date}
           tier={(match as any).matchTier || (match as any).tier}
@@ -1622,9 +1622,9 @@ const CalendarView: React.FC<{
           <ul className="sh-list">
             {selectedItems.map((match) => (
               <li key={match.id} className="sh-list-item">
-                <MatchFinderListItem
+                <EntityListCard
                   title={resolveMatchTitle(match)}
-                  matchHref={resolveEntityHref('matches', String(match.id), entityLinkMode, entityPathBases, publicAppBase)}
+                  href={resolveEntityHref('matches', String(match.id), entityLinkMode, entityPathBases, publicAppBase)}
                   ownerName={(match as any).clubName || (match as any).location?.name || ''}
                   date={match.date}
                   tier={(match as any).matchTier || (match as any).tier}

@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 const pluginSrc = path.resolve(__dirname, '..', 'src');
 const sharedSrc = path.resolve(__dirname, '..', '..', 'packages', 'finder-ui', 'src');
 
-const files = ['match-finder.tsx', 'styles.css', 'MatchFinderListItem.tsx'];
+const files = ['match-finder.tsx', 'styles.css'];
 
 if (!fs.existsSync(sharedSrc)) {
   console.log('[sync-finder-ui] shared package not found; keeping local plugin sources.');
