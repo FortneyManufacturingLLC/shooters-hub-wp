@@ -46,7 +46,7 @@ class Shortcode {
       'statuses' => self::parse_csv($opts['default_statuses'] ?? ''),
       'series' => self::parse_csv($opts['default_series'] ?? ''),
       'seriesMode' => (($opts['default_series_mode'] ?? 'or') === 'and') ? 'and' : 'or',
-      'sort' => in_array(($opts['default_sort'] ?? ''), ['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc'], true)
+      'sort' => in_array(($opts['default_sort'] ?? ''), ['dateAsc', 'dateDesc', 'nameAsc', 'nameDesc', 'likesDesc'], true)
         ? $opts['default_sort']
         : 'dateAsc',
     ];

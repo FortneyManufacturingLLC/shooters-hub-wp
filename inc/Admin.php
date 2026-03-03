@@ -32,7 +32,7 @@ class Admin {
     self::add_text('default_statuses', 'Default Statuses (CSV)', '', 'defaults');
     self::add_text('default_series', 'Default Series IDs (CSV)', '', 'defaults');
     self::add_text('default_series_mode', 'Series Mode (or|and)', 'or', 'defaults');
-    self::add_text('default_sort', 'Sort (dateAsc|dateDesc|nameAsc|nameDesc)', 'dateAsc', 'defaults');
+    self::add_text('default_sort', 'Sort (dateAsc|dateDesc|nameAsc|nameDesc|likesDesc)', 'dateAsc', 'defaults');
     self::add_text('default_min_events', 'Club Finder Default Min Events', '', 'defaults');
     self::add_text('default_layout', 'Default Controls Layout (left|top)', 'left', 'defaults');
 

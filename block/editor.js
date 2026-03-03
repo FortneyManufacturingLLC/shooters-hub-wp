@@ -52,7 +52,7 @@
     textControl(__('Statuses (CSV)', 'shooters-hub'), attributes.statuses, (statuses) => setAttributes({ statuses })),
     textControl(__('Series IDs (CSV)', 'shooters-hub'), attributes.series, (series) => setAttributes({ series })),
     textControl(__('Series Mode (or|and)', 'shooters-hub'), attributes.seriesMode, (seriesMode) => setAttributes({ seriesMode })),
-    textControl(__('Sort (dateAsc|dateDesc|nameAsc|nameDesc)', 'shooters-hub'), attributes.sort, (sort) => setAttributes({ sort })),
+    textControl(__('Sort (dateAsc|dateDesc|nameAsc|nameDesc|likesDesc)', 'shooters-hub'), attributes.sort, (sort) => setAttributes({ sort })),
     isClub
       ? textControl(__('Minimum events', 'shooters-hub'), attributes.minEvents, (minEvents) => setAttributes({ minEvents }))
       : null,
@@ -269,7 +269,7 @@
             textControl(__('Statuses (CSV)', 'shooters-hub'), parentAttributes.statuses, (statuses) => setParentAttributes({ statuses })),
             textControl(__('Series IDs (CSV)', 'shooters-hub'), parentAttributes.series, (series) => setParentAttributes({ series })),
             textControl(__('Series Mode (or|and)', 'shooters-hub'), parentAttributes.seriesMode, (seriesMode) => setParentAttributes({ seriesMode })),
-            textControl(__('Sort (dateAsc|dateDesc|nameAsc|nameDesc)', 'shooters-hub'), parentAttributes.sort, (sort) => setParentAttributes({ sort })),
+            textControl(__('Sort (dateAsc|dateDesc|nameAsc|nameDesc|likesDesc)', 'shooters-hub'), parentAttributes.sort, (sort) => setParentAttributes({ sort })),
             isClub
               ? textControl(__('Minimum events', 'shooters-hub'), parentAttributes.minEvents, (minEvents) => setParentAttributes({ minEvents }))
               : null,
