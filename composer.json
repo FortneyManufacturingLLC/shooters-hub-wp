@@ -1,0 +1,15 @@
+{
+  "name": "fortneymfg/shooters-hub-wp",
+  "description": "Shooters Hub WordPress plugin.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/FortneyManufacturingLLC/fe-plugin-core"
+    }
+  ],
+  "require": {
+    "fortneymfg/fe-plugin-core": "dev-main"
+  }
+}

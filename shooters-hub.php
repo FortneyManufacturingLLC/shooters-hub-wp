@@ -3,15 +3,30 @@
  * Plugin Name: Shooters Hub
  * Description: Embeddable Match Finder and Club Finder powered by The Shooters Hub.
  * Version: 1.0.1
- * Author: Fortney Engineering
+ * Author: FortneyMFG
+ * Author URI: https://fortneymfg.com
  * Text Domain: shooters-hub
- * Update URI: https://updates.shooters-hub.com/plugins/shooters-hub
+ * Update URI: https://updates.fortneymfg.com/plugins/shooters-hub-wp
  */
 
 if (!defined('ABSPATH')) exit;
 
 if (!defined('SH_PLUGIN_VERSION')) {
   define('SH_PLUGIN_VERSION', '1.0.1');
+}
+if (!defined('SH_PLUGIN_SLUG')) {
+  define('SH_PLUGIN_SLUG', 'shooters-hub-wp');
+}
+if (!defined('SH_UPDATES_BASE_URL')) {
+  define('SH_UPDATES_BASE_URL', 'https://updates.fortneymfg.com');
+}
+if (!defined('SH_UPDATES_CHANNEL')) {
+  define('SH_UPDATES_CHANNEL', 'stable');
+}
+
+$sh_autoload = __DIR__ . '/vendor/autoload.php';
+if (file_exists($sh_autoload)) {
+  require_once $sh_autoload;
 }
 
 // Autoload
@@ -50,19 +65,24 @@ add_filter('plugin_action_links_' . plugin_basename(__FILE__), function(array $l
   return $links;
 });
 
-// Plugin Update Checker (GitHub). Optional at runtime.
-$sh_puc = __DIR__ . '/vendor/plugin-update-checker/plugin-update-checker.php';
-if (file_exists($sh_puc)) {
-  require $sh_puc;
-  $sh_updater = Puc_v4_Factory::buildUpdateChecker(
-    'https://github.com/FortneyManufacturingLLC/shooters-hub-wp', // repo root
+// Fortney native updater integration via shared plugin core.
+if (class_exists('\\Fortney\\PluginCore\\V1\\Core\\Bootstrap') && class_exists('\\Fortney\\PluginCore\\V1\\Core\\PluginIdentity')) {
+  $sh_identity = new \Fortney\PluginCore\V1\Core\PluginIdentity(
+    SH_PLUGIN_SLUG,
     __FILE__,
-    'shooters-hub' // plugin slug/folder name in ZIP
+    SH_PLUGIN_VERSION,
+    'Shooters Hub',
+    SH_UPDATES_BASE_URL,
+    SH_UPDATES_CHANNEL
   );
-  $sh_updater->getVcsApi()->enableReleaseAssets();
 
-  // Optional: private repo token defined in wp-config.php: define('SH_GH_TOKEN','ghp_xxx');
-  if (defined('SH_GH_TOKEN') && SH_GH_TOKEN) {
-    $sh_updater->setAuthentication(SH_GH_TOKEN);
+  $sh_credentials = null;
+  if (defined('SH_UPDATES_SITE_KEY') && defined('SH_UPDATES_SITE_SECRET') && SH_UPDATES_SITE_KEY && SH_UPDATES_SITE_SECRET) {
+    $sh_credentials = new \Fortney\PluginCore\V1\Update\SiteCredentials(
+      SH_UPDATES_SITE_KEY,
+      SH_UPDATES_SITE_SECRET
+    );
   }
+
+  \Fortney\PluginCore\V1\Core\Bootstrap::registerUpdater($sh_identity, $sh_credentials);
 }

@@ -9,7 +9,7 @@ Embed the Shooters Hub Match Finder and Club Finder inside WordPress. The plugin
 - OLC index/tile API support via WordPress REST proxy
 - Global defaults in WP admin + per-instance shortcode/block overrides
 - Optional Match Finder and Club Finder pages provisioned on activation
-- Built-in GitHub auto-updater for quick rollouts
+- Built-in Fortney native updater via `fe-plugin-core`
 
 ## Installation
 1. Download the latest release ZIP from the button above.
@@ -38,13 +38,17 @@ The build emits `build/match-finder.js` and `build/match-finder.css`, which are 
 - `[shooters_hub_club_finder]`
 
 ## Releasing
-1. Bump the version across `package.json`, `shooters-hub.php`, and `readme.txt`:
-   ```bash
-   npm run wp-plugin:bump-version -- 1.0.2
-   ```
-2. Commit and merge the change to `main`.
-3. Allow the **Sync WP plugin** workflow to mirror the plugin into [`FortneyManufacturingLLC/shooters-hub-wp`](https://github.com/FortneyManufacturingLLC/shooters-hub-wp).
-4. In the plugin repo, run the “Package release” GitHub workflow (or create a GitHub release) to generate the distribution ZIP. The included workflow attaches the built ZIP to the release automatically.
+1. Bump the version in both files:
+   - `shooters-hub.php` (`Version:` and `SH_PLUGIN_VERSION`)
+   - `readme.txt` (`Stable tag`)
+2. Commit and merge to `main`.
+3. Create and push a tag matching that version, for example `v1.0.2`.
+4. The repo release workflow calls the reusable template in `fortney-updates` to:
+   - validate version consistency against the tag
+   - install Composer dependencies (including `fe-plugin-core`)
+   - build the plugin ZIP artifact
+   - attach artifact to GitHub release
+   - optionally publish metadata to `updates.fortneymfg.com`
 
 ## License
 GPL-2.0-or-later. See [`license.txt`](license.txt).

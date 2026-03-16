@@ -1,0 +1,18 @@
+name: Plugin Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    uses: FortneyManufacturingLLC/fortney-updates/.github/workflows/plugin-release-reusable.yml@main
+    with:
+      plugin_slug: shooters-hub-wp
+      main_file: shooters-hub.php
+      readme_file: readme.txt
+      update_publish_url: https://updates.fortneymfg.com/v1/publisher/wp/releases
+      channel: stable
+    secrets:
+      updates_publisher_token: ${{ secrets.UPDATES_PUBLISHER_TOKEN }}
