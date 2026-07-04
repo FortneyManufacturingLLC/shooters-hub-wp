@@ -16,3 +16,5 @@ jobs:
       channel: stable
     secrets:
       updates_publisher_token: ${{ secrets.UPDATES_PUBLISHER_TOKEN }}
+      gcp_workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      gcp_service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
