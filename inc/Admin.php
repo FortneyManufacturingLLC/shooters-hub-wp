@@ -4,7 +4,24 @@ class Admin {
   const OPT = 'sh_options';
 
   public static function menu() {
-    add_options_page('Shooters Hub', 'Shooters Hub', 'manage_options', 'shooters-hub', [__CLASS__, 'page']);
+    add_menu_page(
+      'Shooters Hub',
+      'Shooters Hub',
+      'manage_options',
+      'shooters-hub',
+      [__CLASS__, 'page'],
+      'dashicons-location-alt',
+      56
+    );
+
+    add_submenu_page(
+      'shooters-hub',
+      'Finder Settings',
+      'Finder Settings',
+      'manage_options',
+      'shooters-hub',
+      [__CLASS__, 'page']
+    );
   }
 
   public static function register_settings() {

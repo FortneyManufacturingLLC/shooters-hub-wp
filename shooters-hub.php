@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Shooters Hub
  * Description: Embeddable Match Finder and Club Finder powered by The Shooters Hub.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: FortneyMFG
  * Author URI: https://fortneymfg.com
  * Text Domain: shooters-hub
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) exit;
 
 if (!defined('SH_PLUGIN_VERSION')) {
-  define('SH_PLUGIN_VERSION', '1.0.1');
+  define('SH_PLUGIN_VERSION', '1.0.2');
 }
 if (!defined('SH_PLUGIN_SLUG')) {
   define('SH_PLUGIN_SLUG', 'shooters-hub-wp');
@@ -60,8 +60,9 @@ register_activation_hook(__FILE__, ['SH\EntityPages', 'flush_routes']);
 register_deactivation_hook(__FILE__, ['SH\EntityPages', 'flush_routes']);
 
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), function(array $links): array {
-  $settingsUrl = admin_url('options-general.php?page=shooters-hub');
+  $settingsUrl = admin_url('admin.php?page=shooters-hub');
   array_unshift($links, '<a href="' . esc_url($settingsUrl) . '">Settings</a>');
+  $links[] = '<a href="' . esc_url(self_admin_url('update-core.php?force-check=1')) . '">Check updates</a>';
   return $links;
 });
 
