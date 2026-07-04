@@ -1,6 +1,7 @@
 name: Plugin Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
