@@ -38,21 +38,11 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup PHP + Composer
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          tools: composer:v2
-
-      - name: Install dependencies
-        if: ${{ hashFiles('composer.json') != '' }}
-        run: composer install --no-dev --prefer-dist --no-progress --optimize-autoloader
-
       - name: Validate version
         shell: bash
         run: |
           EXPECTED="${{ steps.version.outputs.version }}"
-          HEADER_VERSION=$(php -r '$f=file_get_contents($argv[1]); preg_match("/^ \\* Version:\\s*(.+)$/m",$f,$m); echo trim($m[1] ?? "");' "$MAIN_FILE")
+          HEADER_VERSION=$(awk -F': *' '/^[[:space:]]*\* Version:/ {print $2; exit}' "$MAIN_FILE" | xargs)
           if [[ -z "$HEADER_VERSION" ]]; then
             echo "Unable to read plugin header Version from $MAIN_FILE" >&2
             exit 1
@@ -85,11 +75,11 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+          overwrite_files: true
           files: |
             ${{ env.PLUGIN_SLUG }}-${{ steps.version.outputs.version }}.zip
 
       - name: Authenticate to Google Cloud
-        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -97,20 +87,17 @@ jobs:
           project_id: ${{ env.GOOGLE_PROJECT_ID }}
 
       - name: Setup gcloud
-        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.GOOGLE_PROJECT_ID }}
 
       - name: Upload artifact to Fortney updates bucket
-        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
         shell: bash
         run: |
           FILE="$PLUGIN_SLUG.zip"
           gcloud storage cp "$FILE" "$ARTIFACT_BUCKET/wp/$PLUGIN_SLUG/${{ steps.version.outputs.version }}/$FILE"
 
       - name: Publish metadata to Fortney update API
-        if: ${{ env.UPDATES_PUBLISHER_TOKEN != '' }}
         shell: bash
         run: |
           FILE="$PLUGIN_SLUG.zip"
