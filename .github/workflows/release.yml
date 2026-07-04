@@ -6,16 +6,116 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   release:
-    uses: FortneyManufacturingLLC/fortney-updates/.github/workflows/plugin-release-reusable.yml@main
-    with:
-      plugin_slug: shooters-hub-wp
-      main_file: shooters-hub.php
-      readme_file: readme.txt
-      update_publish_url: https://updates.fortneymfg.com/v1/publisher/wp/releases
-      channel: stable
-    secrets:
-      updates_publisher_token: ${{ secrets.UPDATES_PUBLISHER_TOKEN }}
-      gcp_workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      gcp_service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    runs-on: ubuntu-latest
+    env:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      UPDATES_PUBLISHER_TOKEN: ${{ secrets.UPDATES_PUBLISHER_TOKEN }}
+      PLUGIN_SLUG: shooters-hub-wp
+      MAIN_FILE: shooters-hub.php
+      UPDATE_PUBLISH_URL: https://updates.fortneymfg.com/v1/publisher/wp/releases
+      ARTIFACT_BUCKET: gs://fortney-updates-artifacts
+      GOOGLE_PROJECT_ID: fortney-updates
+      CHANNEL: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP + Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer:v2
+
+      - name: Install dependencies
+        if: ${{ hashFiles('composer.json') != '' }}
+        run: composer install --no-dev --prefer-dist --no-progress --optimize-autoloader
+
+      - name: Validate version
+        shell: bash
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}"
+          HEADER_VERSION=$(php -r '$f=file_get_contents($argv[1]); preg_match("/^ \\* Version:\\s*(.+)$/m",$f,$m); echo trim($m[1] ?? "");' "$MAIN_FILE")
+          if [[ -z "$HEADER_VERSION" ]]; then
+            echo "Unable to read plugin header Version from $MAIN_FILE" >&2
+            exit 1
+          fi
+          if [[ "$HEADER_VERSION" != "$EXPECTED" ]]; then
+            echo "Version mismatch. header=$HEADER_VERSION tag=$EXPECTED" >&2
+            exit 1
+          fi
+
+      - name: Build plugin zip
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          STAGE_DIR="$RUNNER_TEMP/package/$PLUGIN_SLUG"
+          ZIP_BASENAME="$PLUGIN_SLUG-$VERSION"
+
+          mkdir -p "$STAGE_DIR"
+          rsync -av ./ "$STAGE_DIR/" --delete --exclude ".git/" --exclude ".github/"
+
+          cd "$RUNNER_TEMP/package"
+          zip -r "${ZIP_BASENAME}.zip" "$PLUGIN_SLUG"
+          cp "${ZIP_BASENAME}.zip" "$GITHUB_WORKSPACE/"
+
+          cd "$STAGE_DIR"
+          zip -r "$GITHUB_WORKSPACE/$PLUGIN_SLUG.zip" .
+
+      - name: Upload GitHub release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ env.PLUGIN_SLUG }}-${{ steps.version.outputs.version }}.zip
+
+      - name: Authenticate to Google Cloud
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GOOGLE_PROJECT_ID }}
+
+      - name: Setup gcloud
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GOOGLE_PROJECT_ID }}
+
+      - name: Upload artifact to Fortney updates bucket
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        shell: bash
+        run: |
+          FILE="$PLUGIN_SLUG.zip"
+          gcloud storage cp "$FILE" "$ARTIFACT_BUCKET/wp/$PLUGIN_SLUG/${{ steps.version.outputs.version }}/$FILE"
+
+      - name: Publish metadata to Fortney update API
+        if: ${{ env.UPDATES_PUBLISHER_TOKEN != '' }}
+        shell: bash
+        run: |
+          FILE="$PLUGIN_SLUG.zip"
+          SHA=$(sha256sum "$FILE" | awk '{print $1}')
+          curl -sS -X POST "$UPDATE_PUBLISH_URL" \
+            -H "Authorization: Bearer $UPDATES_PUBLISHER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"slug\":\"$PLUGIN_SLUG\",\"version\":\"${{ steps.version.outputs.version }}\",\"channel\":\"$CHANNEL\",\"sha256\":\"$SHA\",\"artifactFile\":\"$FILE\"}"
