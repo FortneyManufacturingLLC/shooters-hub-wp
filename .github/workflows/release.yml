@@ -38,8 +38,6 @@ jobs:
       - name: Install Composer dependencies
         shell: bash
         env:
-          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.FORTNEY_REPO_TOKEN || github.token }}"}}'
-        env:
           COMPOSER_TOKEN: "${{ secrets.FORTNEY_REPO_TOKEN || github.token }}"
         run: |
           if [[ -f composer.json ]]; then
@@ -78,7 +76,7 @@ jobs:
           ZIP_BASENAME="$PLUGIN_SLUG-$VERSION"
 
           mkdir -p "$STAGE_DIR"
-          rsync -av ./ "$STAGE_DIR/" --delete --exclude ".git/" --exclude ".github/" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock"
+          rsync -av ./ "$STAGE_DIR/" --delete --exclude ".git/" --exclude ".github/" --exclude "vendor/bin/" --exclude "composer.lock"
 
           cd "$RUNNER_TEMP/package"
           zip -r "${ZIP_BASENAME}.zip" "$PLUGIN_SLUG"
