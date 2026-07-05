@@ -29,6 +29,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        shell: bash
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_PACKAGES_TOKEN || github.token }}"}}'
+        run: |
+          if [[ -f composer.json ]]; then
+            composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+          fi
+
       - name: Resolve version from tag
         id: version
         shell: bash
@@ -60,7 +75,7 @@ jobs:
           ZIP_BASENAME="$PLUGIN_SLUG-$VERSION"
 
           mkdir -p "$STAGE_DIR"
-          rsync -av ./ "$STAGE_DIR/" --delete --exclude ".git/" --exclude ".github/"
+          rsync -av ./ "$STAGE_DIR/" --delete --exclude ".git/" --exclude ".github/" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock" --exclude "vendor/bin/" --exclude "composer.lock"
 
           cd "$RUNNER_TEMP/package"
           zip -r "${ZIP_BASENAME}.zip" "$PLUGIN_SLUG"
